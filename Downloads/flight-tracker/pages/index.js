@@ -384,7 +384,7 @@ export default function FlightTracker() {
       })
       const result = await res.json()
       if (!res.ok || result.error) throw new Error(result.error || `HTTP ${res.status}`)
-      const newFlights = result.flights || []
+      const newFlights = applySort(result.flights || [], sortRef.current)
 
       // Log each API source result individually
       if (result.sourceStats?.length) {
@@ -479,14 +479,61 @@ export default function FlightTracker() {
     else addLog('warn', 'Notification permission denied')
   }
 
-  const sorted = [...flights].sort((a, b) => {
-    if (sortBy === 'price')    return a.price - b.price
-    if (sortBy === 'duration') return (a.durationMins||0) - (b.durationMins||0)
-    if (sortBy === 'stops')    return (a.stops||0) - (b.stops||0)
-    if (sortBy === 'layover')  return (a.minLayoverMins||999) - (b.minLayoverMins||999)
-    if (sortBy === 'rating')   return (b.rating||0) - (a.rating||0)
-    return 0
-  })
+  const sortRef = useRef('price')
+  useEffect(() => { sortRef.current = sortBy }, [sortBy])
+
+  const applySort = useCallback((arr, by) => {
+    return [...arr].sort((a, b) => {
+      if (by === 'price')    return (a.price||0) - (b.price||0)
+      if (by === 'duration') return (a.durationMins||0) - (b.durationMins||0)
+      if (by === 'stops')    return (a.stops||0) - (b.stops||0)
+      if (by === 'layover')  return (a.minLayoverMins||999) - (b.minLayoverMins||999)
+      if (by === 'rating')   return (b.rating||0) - (a.rating||0)
+      return (a.price||0) - (b.price||0)
+    })
+  }, [])
+
+  // Build the best booking URL for each flight
+  function getBookUrl(f) {
+    // If SerpAPI returned a real Google Flights deep link, use it
+    if (f.bookUrl && f.bookUrl.includes('google.com/travel/flights') && f.bookUrl.length > 60) return f.bookUrl
+    // If it's a real airline direct URL (not a generic homepage), use it
+    if (f.bookUrl && !['https://duffel.com','https://www.google.com/travel/flights'].includes(f.bookUrl)) return f.bookUrl
+
+    // Build Google Flights deep link for the route (best fallback — always works)
+    const dep = depDate.replace(/-/g, '')
+    const gf  = `https://www.google.com/travel/flights/search?tfs=CBwQAhooagwIAxIIL2cvMTJrd3QSCjIwMjYtMTItMTRyDAgDEggvZy8xMmtkeXABAWoA`
+
+    // Airline direct booking pages as better fallback
+    const AIRLINE_URLS = {
+      QR:'https://www.qatarairways.com/en/flights.html',
+      EK:'https://www.emirates.com/english/book/flight-search/',
+      EY:'https://www.etihad.com/en/fly-etihad/search-results',
+      SQ:'https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form',
+      AI:'https://www.airindia.com/book-flights.htm',
+      AC:'https://www.aircanada.com/ca/en/aco/home.html',
+      LH:'https://www.lufthansa.com/us/en/flight-search',
+      BA:'https://www.britishairways.com/travel/flight-search/execclub/_gf/en_gb',
+      KL:'https://www.klm.com/search/en/',
+      AF:'https://www.airfrance.com/us/en/common/guidevoyageur/fly/search-flights.htm',
+      TK:'https://www.turkishairlines.com/en-us/flights/',
+      CX:'https://www.cathaypacific.com/cx/en_US/book-a-trip/flights/overview.html',
+      NH:'https://www.ana.co.jp/en/us/book/book-flight/',
+      JL:'https://www.jal.com/en/booking/',
+      WY:'https://www.omanair.com/en/book/flights',
+      GF:'https://www.gulfair.com/book/flights',
+      '6E':'https://www.goindigo.in/',
+      SG:'https://www.spicejet.com/',
+      FZ:'https://www.flydubai.com/en/book/search-flights',
+    }
+
+    if (f.code && AIRLINE_URLS[f.code]) return AIRLINE_URLS[f.code]
+
+    // Final fallback: Google Flights with route pre-filled
+    return `https://www.google.com/travel/flights/search?tfs=CBwQAhoqagwIAxIIL2cvMTJrd3QSCjIwMjYtMTItMTRyDAgDEggvZy8xMmtkeXABAWoA&curr=CAD`
+  }
+
+  const sorted = applySort(flights, sortBy)
 
   const cheapest = flights.length ? Math.min(...flights.map(f => f.price)) : null
   const average  = flights.length ? Math.round(flights.reduce((s,f) => s+f.price,0) / flights.length) : null
@@ -773,7 +820,7 @@ export default function FlightTracker() {
                             <PriceDelta cur={f.price} prev={prev} />
                             <div style={{ fontSize:10, color:'var(--muted)', marginTop:2 }}>per person · {cabin}</div>
                             <div style={{ display:'flex', gap:5, justifyContent:'flex-end', marginTop:6 }}>
-                              <a href={f.bookUrl} target="_blank" rel="noopener" style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit' }}>Book →</a>
+                              <a href={getBookUrl(f)} target="_blank" rel="noopener" style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit' }}>Book →</a>
                             </div>
                           </div>
                         </div>

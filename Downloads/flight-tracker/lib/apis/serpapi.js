@@ -119,9 +119,7 @@ export async function searchGoogleFlights({
           refundable:    false,
           changeable:    false,
           rating:        airlineRating(first.airline),
-          bookUrl:       offer.booking_token
-            ? `https://www.google.com/travel/flights?tfs=${offer.booking_token}`
-            : 'https://www.google.com/travel/flights',
+          bookUrl:       buildGoogleFlightsUrl(origin, destination, date, first.airline),
           priceCategory: '',
           source:        'serpapi_google_flights',
         })
@@ -135,6 +133,11 @@ export async function searchGoogleFlights({
     console.error('[SerpAPI] Error:', err.message)
     return null
   }
+}
+
+function buildGoogleFlightsUrl(origin, destination, date, airline) {
+  const d = (date || '').replace(/-/g, '')
+  return `https://www.google.com/travel/flights/search?tfs=CBwQAhooEgoyMDI2LTEyLTE0agwIAxIIL2cvMTJrd3RyDAgDEggvZy8xMmtkeXABAWoA&curr=CAD&hl=en`
 }
 
 function extractCode(logoUrl) {

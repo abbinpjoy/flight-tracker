@@ -72,7 +72,7 @@ Search Google Flights, Kayak and Skyscanner now. Return JSON array only.`
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model:      'claude-sonnet-4-20250514',
+        model:      'claude-sonnet-4-6',
         max_tokens: 2000,
         system:     systemPrompt,
         tools: [{
