@@ -66,18 +66,28 @@ export async function orchestrateSearch({
 
   function harvest(settled, sourceName) {
     if (settled.status === 'rejected') {
-      log(`${sourceName} error: ${settled.reason?.message}`)
-      sourceStats.push({ name: sourceName, count: 0, status: 'error' })
+      const errMsg = settled.reason?.message || 'unknown error'
+      log(`${sourceName} FAILED: ${errMsg}`)
+      sourceStats.push({ name: sourceName, count: 0, status: 'error', error: errMsg })
       return
     }
     const val = settled.value
-    if (!val) { sourceStats.push({ name: sourceName, count: 0, status: 'skipped' }); return }
+    if (!val) {
+      sourceStats.push({ name: sourceName, count: 0, status: 'skipped' })
+      return
+    }
 
     const flights = Array.isArray(val) ? val : (val.flights || [])
+    if (flights.length === 0) {
+      log(`${sourceName}: 0 results`)
+      sourceStats.push({ name: sourceName, count: 0, status: 'empty' })
+      return
+    }
+
     flights.forEach(f => { f.apiSource = sourceName })
     allFlights.push(...flights)
-    sourceStats.push({ name: sourceName, count: flights.length, status: flights.length ? 'ok' : 'empty' })
-    log(`${sourceName}: ${flights.length} flights`)
+    sourceStats.push({ name: sourceName, count: flights.length, status: 'ok' })
+    log(`${sourceName}: ${flights.length} flights ✓`)
   }
 
   harvest(rSerp,   'SerpAPI')

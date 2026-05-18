@@ -1,101 +1,105 @@
 /**
- * Duffel API Client
- * The best Amadeus alternative — real NDC content, live bookable fares,
- * 300+ airlines, no fixed airline list.
+ * Duffel API Client — fixed version
  *
- * Sign up FREE: https://app.duffel.com/join
- * Docs: https://duffel.com/docs/api
- *
- * Key advantages over Amadeus:
- * - Modern REST API, no SOAP
- * - Real-time availability from airlines directly
- * - Covers budget airlines (Ryanair, easyJet, IndiGo, etc.)
- * - No per-search fees on test mode
- * - Layover filtering built-in
+ * Fixes:
+ * - cabin_class mapping (Duffel uses 'economy' | 'premium_economy' | 'business' | 'first')
+ * - currency variable shadowing in normalizeOffers
+ * - better error detail logging
+ * - supplier_timeout reduced to avoid Duffel's own 15s limit
  */
 
 export class DuffelClient {
   constructor(accessToken) {
-    this.token   = accessToken
-    this.base    = 'https://api.duffel.com'
-    this.version = 'v1'
+    this.token = accessToken
+    this.base  = 'https://api.duffel.com'
   }
 
   async request(method, path, body = null) {
-    const res = await fetch(`${this.base}/${this.version}${path}`, {
+    const url = `${this.base}/air${path}`
+    const opts = {
       method,
       headers: {
-        'Authorization':    `Bearer ${this.token}`,
-        'Duffel-Version':   'v1',
-        'Content-Type':     'application/json',
-        'Accept':           'application/json',
+        'Authorization':  `Bearer ${this.token}`,
+        'Duffel-Version': 'v2',
+        'Content-Type':   'application/json',
+        'Accept':         'application/json',
       },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    })
+    }
+    if (body) opts.body = JSON.stringify(body)
+
+    const res = await fetch(url, opts)
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ errors: [{ message: res.statusText }] }))
-      const msg = err.errors?.[0]?.message || `HTTP ${res.status}`
-      throw new Error(`Duffel API: ${msg}`)
+      let detail = `HTTP ${res.status}`
+      try {
+        const j = await res.json()
+        detail = j.errors?.[0]?.message || j.errors?.[0]?.title || detail
+      } catch {}
+      throw new Error(`Duffel ${res.status}: ${detail}`)
     }
     return res.json()
   }
 
-  /**
-   * Search for offer requests — Duffel's equivalent of flight search.
-   * Returns ALL available offers from all airlines on the route.
-   */
   async searchOffers({
-    origin,
-    destination,
-    departureDate,
-    returnDate,
-    adults       = 1,
-    cabinClass   = 'economy',   // economy | premium_economy | business | first
-    maxLayoverMins = null,      // null = no limit; e.g. 180 for max 3h layover
-    minLayoverMins = 60,        // minimum layover in minutes (default 1hr)
-    currency     = 'CAD',
+    origin, destination, departureDate, returnDate,
+    adults = 1, cabinClass = 'economy',
+    minLayoverMins = 60, maxLayoverMins = null,
+    currency = 'CAD',
   }) {
-    const slices = [
-      { origin, destination, departure_date: departureDate },
-    ]
-    if (returnDate) {
-      slices.push({ origin: destination, destination: origin, departure_date: returnDate })
+    // Duffel accepted cabin_class values
+    const cabinMap = {
+      economy:         'economy',
+      premium_economy: 'premium_economy',
+      business:        'business',
+      first:           'first',
+    }
+    const cabin = cabinMap[cabinClass] || 'economy'
+
+    const slices = [{ origin, destination, departure_date: departureDate }]
+    if (returnDate) slices.push({ origin: destination, destination: origin, departure_date: returnDate })
+
+    // Step 1: Create offer request
+    let offerReq
+    try {
+      offerReq = await this.request('POST', '/offer_requests', {
+        data: {
+          slices,
+          passengers: Array(Math.max(1, adults)).fill({ type: 'adult' }),
+          cabin_class: cabin,
+          return_offers: false,
+          supplier_timeout: 14000,
+        },
+      })
+    } catch (err) {
+      throw new Error(`Duffel offer_request: ${err.message}`)
     }
 
-    // Create offer request
-    const offerReq = await this.request('POST', '/air/offer_requests', {
-      data: {
-        slices,
-        passengers: [{ type: 'adult' }].concat(
-          Array(Math.max(0, adults - 1)).fill({ type: 'adult' })
-        ),
-        cabin_class:       cabinClass,
-        return_offers:     false,
-        supplier_timeout:  16000,
-      },
-    })
-
     const requestId = offerReq.data?.id
-    if (!requestId) throw new Error('Duffel: no offer request ID returned')
+    if (!requestId) throw new Error('Duffel: offer request returned no ID')
 
-    // Fetch offers for this request
-    const offersRes = await this.request('GET',
-      `/air/offers?offer_request_id=${requestId}&sort=total_amount&limit=50&currency=${currency}`
-    )
+    // Step 2: Fetch offers
+    let offersRes
+    try {
+      offersRes = await this.request('GET',
+        `/offers?offer_request_id=${requestId}&sort=total_amount&limit=30`
+      )
+    } catch (err) {
+      throw new Error(`Duffel offers fetch: ${err.message}`)
+    }
 
-    const rawOffers = offersRes.data || []
-    return this.normalizeOffers(rawOffers, minLayoverMins, maxLayoverMins, currency)
+    const raw = offersRes.data || []
+    console.log(`[Duffel] Got ${raw.length} raw offers`)
+
+    return this.normalizeOffers(raw, minLayoverMins, maxLayoverMins, currency)
   }
 
-  normalizeOffers(offers, minLayoverMins, maxLayoverMins, currency) {
+  normalizeOffers(offers, minLayoverMins, maxLayoverMins, outputCurrency) {
     const results = []
 
     for (const offer of offers) {
       try {
         const slice    = offer.slices?.[0]
         if (!slice) continue
-
         const segments = slice.segments || []
         if (!segments.length) continue
 
@@ -103,76 +107,91 @@ export class DuffelClient {
         const last  = segments[segments.length - 1]
         const stops = segments.length - 1
 
-        // ── Layover validation ────────────────────────────────────────
-        let minLayover = Infinity
-        let maxLayover = 0
-        let layoverValid = true
-
+        // Validate layovers
+        let minLay = Infinity, maxLay = 0, layoverOk = true
         for (let i = 0; i < segments.length - 1; i++) {
-          const arrTime  = new Date(segments[i].arriving_at)
-          const depTime  = new Date(segments[i + 1].departing_at)
-          const layMins  = (depTime - arrTime) / 60000
-
-          if (layMins < minLayoverMins) { layoverValid = false; break }
-          if (maxLayoverMins && layMins > maxLayoverMins) { layoverValid = false; break }
-          if (layMins < minLayover) minLayover = layMins
-          if (layMins > maxLayover) maxLayover = layMins
+          const arr = new Date(segments[i].arriving_at)
+          const dep = new Date(segments[i + 1].departing_at)
+          const m   = (dep - arr) / 60000
+          if (m < minLayoverMins) { layoverOk = false; break }
+          if (maxLayoverMins && m > maxLayoverMins) { layoverOk = false; break }
+          if (m < minLay) minLay = m
+          if (m > maxLay) maxLay = m
         }
+        if (!layoverOk) continue
 
-        if (!layoverValid) continue
+        // Duration — Duffel returns seconds
+        const durMins = Math.round((slice.duration || 0) / 60)
+        const durStr  = `${Math.floor(durMins/60)}h ${durMins%60}m`
 
-        // ── Duration ──────────────────────────────────────────────────
-        const durMins = Math.round(slice.duration / 60) // Duffel gives seconds
-        const durH    = Math.floor(durMins / 60)
-        const durM    = durMins % 60
-        const durStr  = `${durH}h ${durM}m`
-
-        // ── Via airports ──────────────────────────────────────────────
         const via = stops > 0
-          ? segments.slice(0, -1).map(s => s.destination.iata_code).join('+')
+          ? segments.slice(0,-1).map(s => s.destination?.iata_code || '').join('+')
           : null
 
-        // ── Airline name ──────────────────────────────────────────────
-        const airline = first.marketing_carrier?.name || first.operating_carrier?.name || first.marketing_carrier?.iata_code || '—'
-        const code    = first.marketing_carrier?.iata_code || '—'
+        const airline  = first.marketing_carrier?.name || first.operating_carrier?.name || '—'
+        const code     = first.marketing_carrier?.iata_code || '—'
+        const rawPrice = parseFloat(offer.total_amount || 0)
+        const rawCurr  = offer.total_currency || 'GBP'
 
-        // ── Price ─────────────────────────────────────────────────────
-        const price    = parseFloat(offer.total_amount)
-        const currency = offer.total_currency || currency
+        // Convert to CAD if needed
+        const rates    = { GBP:1.74, USD:1.37, EUR:1.48, AED:0.37, INR:0.016, SGD:1.01, AUD:0.89 }
+        const price    = rawCurr === outputCurrency
+          ? rawPrice
+          : Math.round(rawPrice * (rates[rawCurr] || 1))
 
-        // ── Book URL ──────────────────────────────────────────────────
-        const bookUrl = `https://www.duffel.com` // In production use offer booking flow
+        // Segments for timeline display
+        const segs = segments.map((seg, i) => ({
+          from:        seg.origin?.iata_code      || seg.origin?.id      || '',
+          to:          seg.destination?.iata_code || seg.destination?.id || '',
+          dep:         seg.departing_at?.slice(11,16) || '',
+          arr:         seg.arriving_at?.slice(11,16)  || '',
+          airline:     seg.marketing_carrier?.name    || '',
+          flight:      `${seg.marketing_carrier?.iata_code || ''}${seg.marketing_carrier_flight_designation || ''}`,
+          durationMins:Math.round((seg.duration || 0) / 60),
+          layoverMins: i > 0
+            ? Math.round((new Date(seg.departing_at) - new Date(segments[i-1].arriving_at)) / 60000)
+            : 0,
+        }))
 
         results.push({
-          id:           offer.id,
+          id:            offer.id,
           airline,
           code,
-          flightNumber: `${code}${first.marketing_carrier_flight_designation || ''}`,
-          aircraft:     first.aircraft?.name || '',
-          departure:    first.departing_at?.slice(11, 16) || '—',
-          arrival:      last.arriving_at?.slice(11, 16)   || '—',
-          departureDate:first.departing_at?.slice(0, 10)  || '',
-          arrivalDate:  last.arriving_at?.slice(0, 10)    || '',
-          duration:     durStr,
-          durationMins: durMins,
+          flightNumber:  segs.map(s => s.flight).filter(Boolean).join('+'),
+          departure:     first.departing_at?.slice(11,16) || '—',
+          arrival:       last.arriving_at?.slice(11,16)   || '—',
+          duration:      durStr,
+          durationMins:  durMins,
           stops,
           via,
-          minLayoverMins: stops > 0 ? Math.round(minLayover) : null,
-          maxLayoverMins: stops > 0 ? Math.round(maxLayover) : null,
+          segments:      segs,
+          minLayoverMins: stops > 0 && minLay !== Infinity ? Math.round(minLay) : null,
+          maxLayoverMins: stops > 0 && maxLay > 0 ? Math.round(maxLay) : null,
           price,
-          currency,
-          seatsLeft:    offer.available_seats ?? 9,
-          refundable:   offer.conditions?.refund_before_departure?.allowed ?? false,
-          changeable:   offer.conditions?.change_before_departure?.allowed ?? false,
-          cabinClass:   first.passengers?.[0]?.cabin_class || 'economy',
-          bookUrl,
-          source:       'duffel',
-          offerId:      offer.id,
-          expiresAt:    offer.expires_at,
+          currency:      outputCurrency,
+          seatsLeft:     offer.available_seats ?? null,
+          refundable:    offer.conditions?.refund_before_departure?.allowed ?? false,
+          changeable:    offer.conditions?.change_before_departure?.allowed ?? false,
+          rating:        airlineRating(code),
+          bookUrl:       'https://duffel.com',
+          source:        'duffel',
         })
-      } catch {}
+      } catch (e) {
+        console.error('[Duffel] normalizeOffers row error:', e.message)
+      }
     }
 
+    console.log(`[Duffel] Normalized: ${results.length} valid offers from ${offers.length} raw`)
     return results.sort((a, b) => a.price - b.price)
   }
+}
+
+function airlineRating(code = '') {
+  const r = {
+    QR:4.7, SQ:4.8, EK:4.6, CX:4.6, NH:4.5, JL:4.5, EY:4.4,
+    KE:4.3, LH:4.3, TK:4.2, BA:4.2, OZ:4.2, VS:4.3, MH:4.0,
+    AF:4.0, GA:4.1, KL:4.1, AI:3.8, AC:3.9, UA:3.8, DL:4.0,
+    AA:3.7, WS:3.7, TG:3.9, '6E':3.6, SG:3.4, FZ:3.6,
+  }
+  return r[code] || 3.8
 }
