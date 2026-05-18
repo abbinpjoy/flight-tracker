@@ -1,109 +1,90 @@
 /**
- * Claude AI Agent — dynamic flight search
+ * Claude AI Agent — Dynamic Flight Search
  *
- * Unlike the old fixed-7-airline approach, this agent:
- * 1. Uses web_search to query live booking sites
- * 2. Finds ALL available airlines on the route (not a preset list)
- * 3. Enforces minimum 1hr layover filter
- * 4. Searches for the objectively cheapest + best value options
- * 5. Returns structured JSON with full flight detail
+ * Searches ALL airlines on any route dynamically via web search.
+ * No predefined airline list — finds whatever actually flies the route.
  */
 
-const SYSTEM = `You are an expert flight search agent with real-time web access.
-
-CRITICAL RULES:
-1. Use web_search to find REAL current prices — search at least 4 of: Google Flights, Kayak, Skyscanner, Expedia, Momondo, airline direct sites
-2. Find ALL airlines operating the route — do NOT limit to a preset list. Include budget carriers, regional airlines, code-share flights
-3. LAYOVER RULE: For connecting flights, ONLY include itineraries where EVERY layover is AT LEAST the minimum specified by the user (default 1 hour). Exclude any option with a layover shorter than the minimum, even if it's cheaper
-4. Return prices in CAD. Convert if needed: 1 USD = 1.37 CAD, 1 GBP = 1.74 CAD, 1 EUR = 1.48 CAD, 1 AED = 0.37 CAD, 1 INR = 0.016 CAD
-5. Calculate layover durations accurately from segment times
-6. Return ONLY raw JSON — no markdown, no backticks, no explanation
-
-OUTPUT FORMAT — return exactly this JSON structure:
-{
-  "flights": [
-    {
-      "airline": "Full Airline Name",
-      "code": "2-letter IATA code",
-      "flightNumber": "e.g. AI116",
-      "departure": "HH:MM",
-      "arrival": "HH:MM+N (e.g. +1 if next day)",
-      "departureAirport": "IATA code",
-      "arrivalAirport": "IATA code",
-      "duration": "Xh Ym",
-      "durationMins": 1575,
-      "stops": 0,
-      "via": "DEL or AMS+FRA or null if direct",
-      "segments": [
-        {
-          "from": "YVR", "to": "DEL",
-          "dep": "10:15", "arr": "13:45+1",
-          "airline": "Air India", "flight": "AI116",
-          "durationMins": 930
-        },
-        {
-          "from": "DEL", "to": "COK",
-          "dep": "16:00", "arr": "19:15+1",
-          "airline": "Air India", "flight": "AI521",
-          "layoverMins": 135,
-          "durationMins": 195
-        }
-      ],
-      "minLayoverMins": 135,
-      "price": 1842,
-      "currency": "CAD",
-      "seatsLeft": 4,
-      "refundable": false,
-      "changeable": true,
-      "rating": 4.2,
-      "bookUrl": "https://...",
-      "priceCategory": ""
-    }
-  ],
-  "searchedSources": ["Google Flights", "Kayak", "Skyscanner"],
-  "totalFound": 12,
-  "directAvailable": false,
-  "cheapestDirect": null,
-  "summary": "2-3 sentence analysis covering best options, price level, layover times, and recommendation",
-  "priceLevel": "peak|high|normal|low",
-  "recommendation": "Book now|Wait|Monitor prices"
-}`
-
 export async function agentSearch({
-  origin,
-  destination,
-  date,
-  returnDate,
-  cabin,
-  passengers,
-  minLayoverMins = 60,
-  maxLayoverMins = null,
-  apiKey,
+  origin, destination, date, returnDate,
+  cabin, passengers, minLayoverMins = 60, maxLayoverMins = null, apiKey,
 }) {
   const cabinLabel = {
     economy: 'Economy', premium_economy: 'Premium Economy',
     business: 'Business Class', first: 'First Class',
   }[cabin] || 'Economy'
 
-  const layoverRule = `Minimum layover: ${minLayoverMins} minutes (${Math.floor(minLayoverMins/60)}h ${minLayoverMins%60}m).${maxLayoverMins ? ` Maximum layover: ${maxLayoverMins} minutes.` : ''} Exclude any flight where any single layover is shorter than the minimum.`
+  const tripType = returnDate
+    ? `Round trip — outbound ${date}, return ${returnDate}`
+    : `One-way on ${date}`
 
-  const userPrompt = `Search for ALL available flights:
+  const systemPrompt = `You are a flight search agent with real-time web access.
 
-Route: ${origin} → ${destination}
-Date: ${date}${returnDate ? `\nReturn: ${returnDate}` : ' (one-way)'}
-Cabin: ${cabinLabel}
-Passengers: ${passengers}
-${layoverRule}
+TASK: Find every available flight for the given route by searching live booking sites.
 
-Search multiple booking sites for ALL airlines on this route — include every carrier you find (major, budget, regional, code-share). Do not limit to a preset list.
+MANDATORY — search ALL of these in sequence:
+1. Google Flights: search "${origin} to ${destination} flights ${date}"
+2. Kayak: search "kayak flights ${origin} ${destination} ${date}"
+3. Skyscanner: search "skyscanner ${origin} ${destination} ${date}"
+4. Search "[airline name] flights ${origin} to ${destination}" for any airline you discover
 
-For each result, verify the layover duration between segments and exclude any with layover < ${minLayoverMins} minutes.
+FIND ALL AIRLINES — include every carrier you see: major airlines, budget carriers, low-cost airlines, regional carriers, code-share flights. Do NOT limit to well-known names.
 
-Find: (1) absolute cheapest valid option, (2) best value (price + journey time + stops + airline quality balanced).
-Prices in CAD.`
+LAYOVER RULE: For connecting flights, calculate the time between arrival of one segment and departure of the next. Only include itineraries where EVERY layover is AT LEAST ${minLayoverMins} minutes. Exclude any flight with a shorter layover.${maxLayoverMins ? ` Also exclude any layover over ${maxLayoverMins} minutes.` : ''}
+
+PRICES: Convert everything to CAD. Rates: 1 USD=1.37 CAD, 1 GBP=1.74, 1 EUR=1.48, 1 AED=0.37, 1 INR=0.016, 1 SGD=1.01, 1 AUD=0.89, 1 QAR=0.38.
+
+OUTPUT: Return ONLY a raw JSON object. No markdown. No backticks. No explanation. Just the JSON.
+
+JSON FORMAT:
+{
+  "flights": [
+    {
+      "airline": "Qatar Airways",
+      "code": "QR",
+      "flightNumber": "QR42 + QR516",
+      "departure": "14:45",
+      "arrival": "19:05+1",
+      "duration": "27h 35m",
+      "durationMins": 1655,
+      "stops": 1,
+      "via": "DOH",
+      "segments": [
+        { "from": "YVR", "to": "DOH", "dep": "14:45", "arr": "10:20+1", "airline": "Qatar Airways", "flight": "QR42", "durationMins": 870, "layoverMins": 0 },
+        { "from": "DOH", "to": "COK", "dep": "12:15+1", "arr": "19:05+1", "airline": "Qatar Airways", "flight": "QR516", "durationMins": 230, "layoverMins": 115 }
+      ],
+      "minLayoverMins": 115,
+      "price": 1920,
+      "currency": "CAD",
+      "seatsLeft": 4,
+      "refundable": true,
+      "changeable": true,
+      "rating": 4.7,
+      "bookUrl": "https://www.qatarairways.com",
+      "priceCategory": ""
+    }
+  ],
+  "searchedSources": ["Google Flights", "Kayak", "Skyscanner"],
+  "totalAirlinesFound": 7,
+  "directAvailable": false,
+  "cheapestDirect": null,
+  "summary": "Found N airlines on ${origin}-${destination}. Cheapest: [airline] CA$[price] via [hub] ([duration], [layover]min layover). Best value: [airline].",
+  "priceLevel": "peak",
+  "recommendation": "Book now"
+}`
+
+  const userPrompt = `Search NOW for all flights:
+FROM: ${origin}
+TO: ${destination}
+TRIP: ${tripType}
+CABIN: ${cabinLabel}
+PASSENGERS: ${passengers}
+MIN LAYOVER: ${minLayoverMins} minutes at every stop${maxLayoverMins ? `\nMAX LAYOVER: ${maxLayoverMins} minutes` : ''}
+
+Search Google Flights, Kayak, Skyscanner. Find every airline on this route. Return JSON only.`
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method:  'POST',
+    method: 'POST',
     headers: {
       'Content-Type':      'application/json',
       'x-api-key':         apiKey,
@@ -111,42 +92,62 @@ Prices in CAD.`
     },
     body: JSON.stringify({
       model:      'claude-sonnet-4-20250514',
-      max_tokens: 3000,
-      system:     SYSTEM,
+      max_tokens: 4000,
+      system:     systemPrompt,
       tools:      [{ type: 'web_search_20250305', name: 'web_search' }],
       messages:   [{ role: 'user', content: userPrompt }],
     }),
   })
 
-  if (!res.ok) {
-    const t = await res.text()
-    throw new Error(`Anthropic ${res.status}: ${t}`)
-  }
+  if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text()}`)
 
   const data     = await res.json()
   const searches = data.content.filter(b => b.type === 'tool_use').length
   const text     = data.content.filter(b => b.type === 'text').map(b => b.text).join('')
 
+  console.log(`[agent] ${searches} web searches, ${text.length} chars response`)
+
+  // ── Parse JSON ────────────────────────────────────────────────────────
   let parsed = null
+  // Try 1: direct parse
   try { parsed = JSON.parse(text.trim()) } catch {}
+  // Try 2: extract JSON block
   if (!parsed) {
-    const m = text.match(/\{[\s\S]*"flights"[\s\S]*\}/)
-    if (m) { try { parsed = JSON.parse(m[0]) } catch {} }
+    const m = text.match(/\{[\s\S]*?"flights"\s*:\s*\[[\s\S]*\][\s\S]*?\}/)
+    if (m) try { parsed = JSON.parse(m[0]) } catch {}
+  }
+  // Try 3: extract just the array
+  if (!parsed) {
+    const m = text.match(/\[\s*\{\s*"airline"[\s\S]*?\}\s*\]/)
+    if (m) try { parsed = { flights: JSON.parse(m[0]) } } catch {}
   }
 
   if (!parsed?.flights?.length) {
-    return { flights: [], summary: 'Agent returned no results', searches, source: 'agent_empty' }
+    console.log('[agent] Parse failed. Sample:', text.slice(0, 400))
+    return { flights: [], searches, source: 'agent_no_parse' }
   }
 
-  // Post-process: enforce layover rule on agent output
+  // ── Enforce layover rules ─────────────────────────────────────────────
   parsed.flights = parsed.flights.filter(f => {
-    if (f.stops === 0) return true
-    if (!f.minLayoverMins) return true // no layover data, keep
-    return f.minLayoverMins >= minLayoverMins &&
-      (!maxLayoverMins || f.maxLayoverMins <= maxLayoverMins)
+    if (!f.stops) return true
+    // Use minLayoverMins field if present
+    if (typeof f.minLayoverMins === 'number') {
+      if (f.minLayoverMins < minLayoverMins) return false
+      if (maxLayoverMins && f.maxLayoverMins > maxLayoverMins) return false
+      return true
+    }
+    // Fall back to checking segments
+    if (Array.isArray(f.segments)) {
+      for (const seg of f.segments) {
+        if (seg.layoverMins > 0) {
+          if (seg.layoverMins < minLayoverMins) return false
+          if (maxLayoverMins && seg.layoverMins > maxLayoverMins) return false
+        }
+      }
+    }
+    return true
   })
 
-  // Sort + mark categories
   parsed.flights.sort((a, b) => a.price - b.price)
   markCategories(parsed.flights)
 
@@ -154,24 +155,30 @@ Prices in CAD.`
 }
 
 export function markCategories(flights) {
+  if (!flights?.length) return
   flights.forEach(f => { if (!f.priceCategory) f.priceCategory = '' })
-  if (flights.length > 0 && !flights.find(f => f.priceCategory === 'cheapest')) {
+
+  if (!flights.find(f => f.priceCategory === 'cheapest')) {
     flights[0].priceCategory = 'cheapest'
   }
-  if (!flights.find(f => f.priceCategory === 'best_value') && flights.length > 1) {
-    // Score: balances price, stops, duration, rating
+
+  if (flights.length > 1 && !flights.find(f => f.priceCategory === 'best_value')) {
     const minP = flights[0].price
     const maxP = flights[flights.length - 1].price
     const range = maxP - minP || 1
-    const scored = flights.map(f => ({
-      code:  f.code,
-      id:    f.id || f.code,
-      score: ((f.price - minP) / range) * 0.45
-           + (f.stops * 0.20)
-           + ((f.durationMins || 1600) / 3000) * 0.20
-           + (1 - (f.rating || 4) / 5) * 0.15,
+    const minD = Math.min(...flights.map(f => f.durationMins || 1600))
+    const maxD = Math.max(...flights.map(f => f.durationMins || 1600))
+    const dRange = maxD - minD || 1
+
+    const scored = flights.map((f, idx) => ({
+      idx,
+      score: ((f.price - minP) / range) * 0.40
+           + ((f.stops || 0) * 0.15)
+           + (((f.durationMins || 1600) - minD) / dRange) * 0.25
+           + ((1 - (f.rating || 4) / 5) * 0.20),
     })).sort((a, b) => a.score - b.score)
-    const bv = flights.find(f => (f.id || f.code) === scored[0].id)
+
+    const bv = flights[scored[0].idx]
     if (bv && bv.priceCategory !== 'cheapest') bv.priceCategory = 'best_value'
   }
 }
