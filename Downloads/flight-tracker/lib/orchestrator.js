@@ -1,242 +1,190 @@
 /**
  * Flight Search Orchestrator
  *
- * Runs ALL available APIs in parallel simultaneously:
- *   1. SerpAPI (Google Flights) — best real-time pricing
- *   2. Kiwi Tequila            — best for budget airlines & combinations
- *   3. Duffel                  — NDC fares, bookable offers
- *   4. Claude agent            — web search fallback
+ * Fires ALL configured APIs simultaneously.
+ * Waits for ALL to finish (or timeout individually).
+ * Merges every result, deduplicates, scores and ranks.
  *
- * Merges results, deduplicates, applies value scoring,
- * and returns the best options dynamically ranked.
- *
- * Results change every refresh tick as live prices update.
+ * SerpAPI fast result does NOT stop the others — all run in parallel.
  */
 
-import { searchGoogleFlights }  from './apis/serpapi.js'
-import { searchKiwi }           from './apis/kiwi.js'
-import { DuffelClient }         from './duffel.js'
-import { agentSearch }          from './agent.js'
-import { generateFallback }     from './fallback.js'
+import { searchGoogleFlights } from './apis/serpapi.js'
+import { searchKiwi }          from './apis/kiwi.js'
+import { DuffelClient }        from './duffel.js'
+import { agentSearch }         from './agent.js'
+import { generateFallback }    from './fallback.js'
+
+// Individual timeouts so a slow API never kills the whole response
+const T = { serpapi: 12000, kiwi: 12000, duffel: 15000, agent: 22000 }
+
+function raceTimeout(promise, ms, name) {
+  return Promise.race([
+    promise,
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error(`${name} timeout after ${ms}ms`)), ms)
+    ),
+  ])
+}
 
 export async function orchestrateSearch({
   origin, destination, date, returnDate,
-  cabin, passengers, minLayoverMins = 60, maxLayoverMins = null,
+  cabin, passengers,
+  minLayoverMins = 60, maxLayoverMins = null,
   currency = 'CAD', apiKey,
 }) {
-  const log = (...a) => console.log(`[orchestrator ${origin}→${destination}]`, ...a)
+  const log = (...a) => console.log(`[orch ${origin}→${destination}]`, ...a)
+  const t0  = Date.now()
 
-  // ── Run all available APIs in parallel ────────────────────────────────
-  log('Launching parallel API searches...')
-  const startTime = Date.now()
+  const hasSerpAPI = !!(process.env.SERPAPI_KEY?.length > 10)
+  const hasKiwi    = !!(process.env.KIWI_API_KEY?.length > 5)
+  const hasDuffel  = !!(process.env.DUFFEL_ACCESS_TOKEN?.length > 10)
+  const hasAgent   = !!apiKey
 
-  const [serpResult, kiwiResult, duffelResult, agentResult] = await Promise.allSettled([
+  log(`Starting — SerpAPI:${hasSerpAPI} Kiwi:${hasKiwi} Duffel:${hasDuffel} Agent:${hasAgent}`)
 
-    // 1. SerpAPI — Google Flights (best real-time data)
-    process.env.SERPAPI_KEY && !process.env.SERPAPI_KEY.includes('YOUR')
-      ? searchGoogleFlights({ origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins })
+  const params = { origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins, maxLayoverMins }
+
+  // ── Fire ALL APIs at once — Promise.allSettled waits for ALL ──────────
+  const [rSerp, rKiwi, rDuffel, rAgent] = await Promise.allSettled([
+    hasSerpAPI ? raceTimeout(searchGoogleFlights(params), T.serpapi, 'SerpAPI') : Promise.resolve(null),
+    hasKiwi    ? raceTimeout(searchKiwi(params),          T.kiwi,    'Kiwi')    : Promise.resolve(null),
+    hasDuffel  ? raceTimeout(
+        new DuffelClient(process.env.DUFFEL_ACCESS_TOKEN).searchOffers({
+          origin, destination, departureDate: date, returnDate,
+          adults: parseInt(passengers), cabinClass: cabin,
+          minLayoverMins, maxLayoverMins, currency,
+        }), T.duffel, 'Duffel')
       : Promise.resolve(null),
-
-    // 2. Kiwi Tequila (best for budget airlines)
-    process.env.KIWI_API_KEY && !process.env.KIWI_API_KEY.includes('YOUR')
-      ? searchKiwi({ origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins, maxLayoverMins })
-      : Promise.resolve(null),
-
-    // 3. Duffel (NDC fares, bookable)
-    process.env.DUFFEL_ACCESS_TOKEN && !process.env.DUFFEL_ACCESS_TOKEN.includes('YOUR')
-      ? new DuffelClient(process.env.DUFFEL_ACCESS_TOKEN).searchOffers({ origin, destination, departureDate: date, returnDate, adults: parseInt(passengers), cabinClass: cabin, minLayoverMins, maxLayoverMins, currency })
-      : Promise.resolve(null),
-
-    // 4. Claude agent with web search (always available if Anthropic key set)
-    apiKey
-      ? agentSearch({ origin, destination, date, returnDate, cabin, passengers, minLayoverMins, maxLayoverMins, apiKey })
-      : Promise.resolve(null),
+    hasAgent   ? raceTimeout(agentSearch({ ...params, apiKey }), T.agent, 'Agent') : Promise.resolve(null),
   ])
 
-  const elapsed = Date.now() - startTime
-  log(`Parallel fetch done in ${elapsed}ms`)
+  log(`All APIs done in ${Date.now() - t0}ms`)
 
-  // ── Collect results from each source ─────────────────────────────────
-  const sourceResults = []
-  const sourceSummary = []
+  // ── Extract flights from each result ──────────────────────────────────
+  const sourceStats  = []
+  const allFlights   = []
 
-  function collect(result, label) {
-    if (result.status === 'fulfilled' && result.value) {
-      const flights = Array.isArray(result.value) ? result.value : (result.value.flights || [])
-      if (flights.length > 0) {
-        sourceResults.push(...flights)
-        sourceSummary.push(`${label}(${flights.length})`)
-        log(`${label}: ${flights.length} flights`)
-        return true
-      }
+  function harvest(settled, sourceName) {
+    if (settled.status === 'rejected') {
+      log(`${sourceName} error: ${settled.reason?.message}`)
+      sourceStats.push({ name: sourceName, count: 0, status: 'error' })
+      return
     }
-    if (result.status === 'rejected') log(`${label} error: ${result.reason?.message}`)
-    else log(`${label}: no results`)
-    return false
+    const val = settled.value
+    if (!val) { sourceStats.push({ name: sourceName, count: 0, status: 'skipped' }); return }
+
+    const flights = Array.isArray(val) ? val : (val.flights || [])
+    flights.forEach(f => { f.apiSource = sourceName })
+    allFlights.push(...flights)
+    sourceStats.push({ name: sourceName, count: flights.length, status: flights.length ? 'ok' : 'empty' })
+    log(`${sourceName}: ${flights.length} flights`)
   }
 
-  const serpOk   = collect(serpResult,   'SerpAPI')
-  const kiwiOk   = collect(kiwiResult,   'Kiwi')
-  const duffelOk = collect(duffelResult, 'Duffel')
-  const agentOk  = collect(agentResult,  'Agent')
+  harvest(rSerp,   'SerpAPI')
+  harvest(rKiwi,   'Kiwi')
+  harvest(rDuffel, 'Duffel')
+  harvest(rAgent,  'Agent')
 
-  log(`Sources with results: ${sourceSummary.join(', ') || 'none'}`)
+  const activeSources = sourceStats.filter(s => s.status === 'ok')
+  log(`Merged: ${allFlights.length} total flights from ${activeSources.length} sources`)
 
-  // ── If no real APIs returned data, use dynamic fallback ───────────────
-  if (sourceResults.length === 0) {
-    log('All APIs empty — using dynamic fallback')
-    const fallback = generateFallback(origin, destination, date, cabin, passengers, minLayoverMins)
-    return { ...fallback, elapsed, sourceSummary: ['estimate'] }
+  // ── Fallback if nothing worked ────────────────────────────────────────
+  if (allFlights.length === 0) {
+    log('No API results — using dynamic fallback')
+    const fb = generateFallback(origin, destination, date, cabin, passengers, minLayoverMins)
+    return { ...fb, sourceStats, elapsed: Date.now() - t0 }
   }
 
-  // ── Deduplicate: same airline + similar departure time + similar price ─
-  const deduped = deduplicateFlights(sourceResults)
-  log(`Deduplication: ${sourceResults.length} → ${deduped.length} flights`)
-
-  // ── Apply layover filter one more time ────────────────────────────────
-  const filtered = deduped.filter(f => {
-    if (!f.stops) return true
-    if (f.minLayoverMins !== null && f.minLayoverMins !== undefined) {
-      if (f.minLayoverMins < minLayoverMins) return false
-      if (maxLayoverMins && f.maxLayoverMins > maxLayoverMins) return false
-    }
+  // ── Apply layover filter ──────────────────────────────────────────────
+  const layoverValid = allFlights.filter(f => {
+    if (!f.stops || f.stops === 0) return true
+    const min = f.minLayoverMins ?? f.min_layover_duration_minutes ?? null
+    if (min === null) return true // no data, keep it
+    if (min < minLayoverMins) return false
+    if (maxLayoverMins && min > maxLayoverMins) return false
     return true
   })
-  log(`After layover filter: ${filtered.length} flights`)
+  log(`Layover filter: ${allFlights.length} → ${layoverValid.length}`)
 
-  // ── Score and sort ────────────────────────────────────────────────────
-  const scored = scoreAndRank(filtered)
-
-  // ── Mark cheapest and best value ──────────────────────────────────────
-  markBestOptions(scored)
-
-  // ── Build summary ─────────────────────────────────────────────────────
-  const cheapest = scored[0]
-  const bestVal  = scored.find(f => f.priceCategory === 'best_value')
-  const direct   = scored.find(f => f.stops === 0)
-  const sources  = [...new Set(scored.map(f => f.source).filter(Boolean))]
-
-  const summary = buildSummary(scored, cheapest, bestVal, direct, origin, destination, minLayoverMins, sources)
-  const priceLevel = detectPriceLevel(date)
-
-  return {
-    flights:        scored,
-    directAvailable:!!direct,
-    cheapestDirect: direct?.price || null,
-    summary,
-    priceLevel,
-    recommendation: priceLevel === 'peak' ? 'Book now — peak season' : priceLevel === 'high' ? 'Book soon' : 'Monitor prices',
-    source:         sources.length > 1 ? `multi(${sourceSummary.join('+')})` : (sources[0] || 'estimate'),
-    sourceSummary,
-    webSearches:    agentResult.value?.searches || 0,
-    elapsed,
-    fetchedAt:      new Date().toISOString(),
-  }
-}
-
-// ── Deduplicate flights from multiple sources ─────────────────────────────
-function deduplicateFlights(flights) {
-  const seen  = new Map()
-  const result = []
-
-  for (const f of flights) {
-    // Key: airline code + departure time + stops + rough price bucket
-    const priceBucket = Math.round(f.price / 50) * 50 // group within CA$50
-    const key = `${f.code}-${f.departure}-${f.stops}-${priceBucket}`
-
+  // ── Deduplicate: same airline + same departure + similar price ────────
+  const seen    = new Map()
+  const deduped = []
+  for (const f of layoverValid) {
+    const pBucket = Math.round((f.price || 0) / 30) * 30
+    const key     = `${f.code || f.airline}-${f.departure}-${f.stops}-${pBucket}`
     if (!seen.has(key)) {
       seen.set(key, true)
-      result.push(f)
-    } else {
-      // Keep the one with more data (segments, seat count, etc.)
-      const existing = result.find(r => {
-        const rb = Math.round(r.price/50)*50
-        return `${r.code}-${r.departure}-${r.stops}-${rb}` === key
-      })
-      if (existing && (!existing.segments?.length && f.segments?.length)) {
-        Object.assign(existing, f)
-      }
+      deduped.push(f)
     }
   }
+  log(`Dedup: ${layoverValid.length} → ${deduped.length}`)
 
-  return result
-}
-
-// ── Score flights by value (lower score = better value) ───────────────────
-function scoreAndRank(flights) {
-  if (!flights.length) return flights
-
-  const prices   = flights.map(f => f.price)
-  const durations = flights.map(f => f.durationMins || 1500)
-  const minP = Math.min(...prices),   maxP = Math.max(...prices)
+  // ── Score every flight (lower = better value) ─────────────────────────
+  const prices = deduped.map(f => f.price || 0)
+  const durations = deduped.map(f => f.durationMins || 1500)
+  const minP = Math.min(...prices), maxP = Math.max(...prices)
   const minD = Math.min(...durations), maxD = Math.max(...durations)
-  const rangeP = maxP - minP || 1
-  const rangeD = maxD - minD || 1
+  const rP = maxP - minP || 1
+  const rD = maxD - minD || 1
 
-  return flights.map(f => ({
+  const scored = deduped.map(f => ({
     ...f,
+    priceCategory: '',
     valueScore: (
-      ((f.price - minP) / rangeP)                      * 0.45 + // 45% price
-      ((f.stops || 0) * 0.10)                                  + // 10% stops
-      (((f.durationMins||1500) - minD) / rangeD)       * 0.25 + // 25% duration
-      ((1 - Math.min((f.rating||3.8), 5) / 5)          * 0.20)  // 20% airline quality
+      ((f.price - minP) / rP)                        * 0.45 +  // 45% price
+      ((f.stops || 0) * 0.10)                                 + // 10% fewer stops
+      (((f.durationMins || 1500) - minD) / rD)       * 0.25 +  // 25% shorter flight
+      ((1 - Math.min(f.rating || 3.8, 5) / 5)        * 0.20)   // 20% airline quality
     ),
-  })).sort((a, b) => a.price - b.price) // sort by price for display
-}
+  })).sort((a, b) => a.price - b.price)
 
-// ── Mark cheapest and best value ──────────────────────────────────────────
-function markBestOptions(flights) {
-  flights.forEach(f => { f.priceCategory = '' })
-
-  if (flights.length === 0) return
-
-  // Cheapest = lowest price
-  flights[0].priceCategory = 'cheapest'
-
-  // Best value = lowest value score (not same as cheapest)
-  if (flights.length > 1) {
-    const bestValueFlight = [...flights].sort((a, b) => (a.valueScore||0) - (b.valueScore||0))[0]
-    if (bestValueFlight && bestValueFlight !== flights[0]) {
-      bestValueFlight.priceCategory = 'best_value'
-    } else if (flights.length > 1) {
-      // Pick second if same flight is cheapest
-      const others = [...flights].sort((a, b) => (a.valueScore||0) - (b.valueScore||0))
-      const bv = others.find(f => f.priceCategory !== 'cheapest')
-      if (bv) bv.priceCategory = 'best_value'
-    }
+  // ── Mark cheapest + best value ────────────────────────────────────────
+  if (scored.length > 0) {
+    scored[0].priceCategory = 'cheapest'
   }
-}
-
-// ── Build human-readable summary ──────────────────────────────────────────
-function buildSummary(flights, cheapest, bestVal, direct, origin, destination, minLayoverMins, sources) {
-  if (!flights.length) return 'No flights found for this route.'
-
-  const parts = []
-
-  parts.push(`${flights.length} flights found on ${origin}→${destination}.`)
-
-  if (cheapest) {
-    parts.push(`Cheapest: ${cheapest.airline} at CA$${cheapest.price.toLocaleString()}${cheapest.via ? ` via ${cheapest.via}` : ' (direct)'} (${cheapest.duration}).`)
+  if (scored.length > 1) {
+    const byValue = [...scored].sort((a, b) => a.valueScore - b.valueScore)
+    const bv      = byValue.find(f => f.priceCategory !== 'cheapest')
+    if (bv) bv.priceCategory = 'best_value'
   }
 
-  if (bestVal && bestVal !== cheapest) {
-    parts.push(`Best value: ${bestVal.airline} CA$${bestVal.price.toLocaleString()} — rated ★${bestVal.rating} with ${bestVal.stops === 0 ? 'no stops' : `${bestVal.stops} stop${bestVal.stops>1?'s':''}`}.`)
-  }
+  // ── Build summary ──────────────────────────────────────────────────────
+  const cheapest  = scored[0]
+  const bestVal   = scored.find(f => f.priceCategory === 'best_value')
+  const direct    = scored.find(f => f.stops === 0)
+  const srcNames  = activeSources.map(s => `${s.name}(${s.count})`).join(' + ')
 
-  if (direct) {
-    parts.push(`Direct flights available from CA$${direct.price.toLocaleString()}.`)
-  } else {
-    parts.push(`All options connect via hub. Min layover ${minLayoverMins}min enforced.`)
-  }
+  const summaryParts = [
+    `${scored.length} flights found from ${activeSources.length} source${activeSources.length > 1 ? 's' : ''} [${srcNames}].`,
+    cheapest  ? `Cheapest: ${cheapest.airline} CA$${cheapest.price?.toLocaleString()}${cheapest.via ? ` via ${cheapest.via}` : ' direct'} · ${cheapest.duration}.` : '',
+    bestVal   ? `Best value: ${bestVal.airline} CA$${bestVal.price?.toLocaleString()} · ★${bestVal.rating} · ${bestVal.stops === 0 ? 'direct' : `${bestVal.stops} stop${bestVal.stops > 1 ? 's' : ''}`}.` : '',
+    direct    ? `Direct available from CA$${direct.price?.toLocaleString()}.` : `No direct flights — all via hub (min ${minLayoverMins}min layover).`,
+  ]
 
-  if (sources.length > 1) {
-    parts.push(`Data from: ${sources.slice(0,3).join(', ')}.`)
-  }
+  const pl = detectPriceLevel(date)
+  const sourceLabel = activeSources.length > 1
+    ? `multi(${activeSources.map(s => s.name.toLowerCase()).join('+')})`
+    : (activeSources[0]?.name?.toLowerCase() || 'estimate')
 
-  return parts.join(' ')
+  return {
+    flights:         scored,
+    directAvailable: !!direct,
+    cheapestDirect:  direct?.price || null,
+    summary:         summaryParts.filter(Boolean).join(' '),
+    priceLevel:      pl,
+    recommendation:  pl === 'peak' ? 'Book now — peak season' : pl === 'high' ? 'Book soon' : 'Monitor prices',
+    source:          sourceLabel,
+    sourceStats,
+    webSearches:     rAgent.value?.searches || 0,
+    totalMerged:     allFlights.length,
+    afterFilter:     layoverValid.length,
+    afterDedup:      deduped.length,
+    elapsed:         Date.now() - t0,
+    fetchedAt:       new Date().toISOString(),
+  }
 }
 
 function detectPriceLevel(date) {
   const m = new Date(date).getMonth() + 1
-  return [12,1].includes(m) ? 'peak' : [7,8].includes(m) ? 'high' : [3,4].includes(m) ? 'moderate' : 'normal'
+  return [12, 1].includes(m) ? 'peak' : [7, 8].includes(m) ? 'high' : [3, 4].includes(m) ? 'moderate' : 'normal'
 }

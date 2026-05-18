@@ -385,7 +385,19 @@ export default function FlightTracker() {
       const result = await res.json()
       if (!res.ok || result.error) throw new Error(result.error || `HTTP ${res.status}`)
       const newFlights = result.flights || []
-      addLog('ok', `${result.source} — ${newFlights.length} flights found`)
+
+      // Log each API source result individually
+      if (result.sourceStats?.length) {
+        result.sourceStats.forEach(s => {
+          if (s.status === 'ok')      addLog('ok',   `${s.name}: ${s.count} flights found`)
+          else if (s.status === 'error')  addLog('warn', `${s.name}: ${s.error || 'error'}`)
+          else if (s.status === 'empty')  addLog('info', `${s.name}: 0 results for this route`)
+          else if (s.status === 'skipped') addLog('info', `${s.name}: no API key configured`)
+        })
+        addLog('ok', `Merged ${result.totalMerged || newFlights.length} → deduped ${result.afterDedup || newFlights.length} → shown ${newFlights.length} (${result.elapsed}ms)`)
+      } else {
+        addLog('ok', `${result.source} — ${newFlights.length} flights · ${result.elapsed || 0}ms`)
+      }
 
       setFlights(prev => {
         const prevMap = {}
@@ -513,10 +525,19 @@ export default function FlightTracker() {
           <span className={isTracking ? 'anim-pulse' : ''} style={{ width:7, height:7, borderRadius:'50%', background:isTracking?'var(--green)':'var(--hint)', boxShadow:isTracking?'0 0 8px var(--green)':'none', display:'inline-block' }} />
           {isTracking && <span style={{ fontSize:10, color:'var(--green)', fontWeight:800, letterSpacing:'.06em' }}>LIVE</span>}
         </div>
-        <div style={{ display:'flex', gap:16, fontSize:11, color:'var(--muted)', fontFamily:'DM Mono,monospace', alignItems:'center' }}>
-          {meta?.source && <Badge color={meta.source==='duffel'?'blue':meta.source==='claude_websearch'?'green':'amber'} small>{meta.source}</Badge>}
-          {isTracking && countdown>0 && <span style={{ color:countdown<=5?'var(--amber)':'var(--muted)' }}>next {countdown}s</span>}
-          {tickCount>0 && <span>tick #{tickCount}</span>}
+        <div style={{ display:'flex', gap:8, fontSize:11, color:'var(--muted)', fontFamily:'DM Mono,monospace', alignItems:'center', flexWrap:'wrap' }}>
+          {/* Per-source badges */}
+          {meta?.sourceStats?.filter(s => s.status === 'ok').map(s => (
+            <Badge key={s.name} color={s.name==='SerpAPI'?'green':s.name==='Duffel'?'blue':s.name==='Kiwi'?'amber':'purple'} small>
+              {s.name} {s.count}
+            </Badge>
+          ))}
+          {meta?.sourceStats?.filter(s => s.status === 'error').map(s => (
+            <Badge key={s.name} color="red" small>{s.name} ✗</Badge>
+          ))}
+          {meta?.elapsed && <span style={{ color:'var(--hint)' }}>{meta.elapsed}ms</span>}
+          {isTracking && countdown>0 && <span style={{ color:countdown<=5?'var(--amber)':'var(--muted)', marginLeft:4 }}>next {countdown}s</span>}
+          {tickCount>0 && <span>#{tickCount}</span>}
           {lastFetch && <span>{lastFetch.toLocaleTimeString('en-GB',{hour12:false})}</span>}
         </div>
       </header>
@@ -629,12 +650,43 @@ export default function FlightTracker() {
             </div>
           )}
 
-          {meta?.summary && (
-            <div style={{ background:'rgba(110,231,183,.05)', border:'0.5px solid rgba(110,231,183,.15)', borderRadius:9, padding:'9px 13px', marginBottom:12, fontSize:12, color:'#9ca3af', lineHeight:1.7 }}>
-              <span style={{ color:'var(--accent)', fontWeight:800 }}>Agent: </span>{meta.summary}
-              {meta.source==='estimate' && <span style={{ color:'var(--hint)' }}> — add ANTHROPIC_API_KEY for live search</span>}
-              {meta.source==='duffel' && <span style={{ color:'var(--blue)', marginLeft:6, fontSize:10, fontWeight:700 }}>● Duffel Live</span>}
-              {meta.source==='claude_websearch' && <span style={{ color:'var(--green)', marginLeft:6, fontSize:10, fontWeight:700 }}>● Web Searched</span>}
+          {meta && (
+            <div style={{ background:'rgba(110,231,183,.04)', border:'0.5px solid rgba(110,231,183,.15)', borderRadius:9, padding:'10px 14px', marginBottom:12 }}>
+              {/* Source breakdown row */}
+              {meta.sourceStats?.length > 0 && (
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:8 }}>
+                  {meta.sourceStats.map(s => {
+                    const color = s.status==='ok' ? (s.name==='SerpAPI'?'green':s.name==='Duffel'?'blue':s.name==='Kiwi'?'amber':'purple')
+                      : s.status==='error' ? 'red' : 'grey'
+                    const icon  = s.status==='ok' ? '✓' : s.status==='error' ? '✗' : s.status==='skipped' ? '—' : '○'
+                    const bg    = s.status==='ok'
+                      ? (s.name==='SerpAPI'?'rgba(34,197,94,.1)':s.name==='Duffel'?'rgba(59,130,246,.1)':s.name==='Kiwi'?'rgba(245,158,11,.1)':'rgba(168,85,247,.1)')
+                      : s.status==='error' ? 'rgba(239,68,68,.1)' : 'rgba(55,65,81,.15)'
+                    const fg    = s.status==='ok'
+                      ? (s.name==='SerpAPI'?'var(--green)':s.name==='Duffel'?'var(--blue)':s.name==='Kiwi'?'var(--amber)':'var(--purple)')
+                      : s.status==='error' ? 'var(--red)' : 'var(--hint)'
+                    return (
+                      <span key={s.name} style={{ fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:99, background:bg, color:fg, fontFamily:'DM Mono,monospace' }}>
+                        {icon} {s.name}{s.count > 0 ? ` ${s.count}` : ''}
+                      </span>
+                    )
+                  })}
+                  {meta.elapsed && <span style={{ fontSize:10, color:'var(--hint)', padding:'2px 4px' }}>{meta.elapsed}ms total</span>}
+                  {meta.totalMerged > flights.length && (
+                    <span style={{ fontSize:10, color:'var(--muted)', padding:'2px 4px' }}>
+                      {meta.totalMerged} merged → {meta.afterDedup} deduped → {flights.length} shown
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* Summary text */}
+              {meta.summary && (
+                <div style={{ fontSize:12, color:'#9ca3af', lineHeight:1.7 }}>
+                  <span style={{ color:'var(--accent)', fontWeight:800 }}>Summary: </span>
+                  {meta.summary}
+                  {meta.source==='estimate' && <span style={{ color:'var(--hint)', fontSize:11 }}> (estimated — live APIs returning no data for this route)</span>}
+                </div>
+              )}
             </div>
           )}
 
@@ -704,9 +756,10 @@ export default function FlightTracker() {
                               <LayoverInfo flight={f} />
                               <span style={{ fontSize:11, color:'var(--muted)' }}>{f.airline}</span>
                               {f.rating && <span style={{ fontSize:11, color:'var(--muted)' }}>★ {f.rating}</span>}
-                              {f.seatsLeft<=4 && <Badge color="red" small>Only {f.seatsLeft} left!</Badge>}
+                              {f.seatsLeft<=4 && f.seatsLeft!=null && <Badge color="red" small>Only {f.seatsLeft} left!</Badge>}
                               {f.refundable  && <Badge color="green" small>✓ Refundable</Badge>}
                               {f.changeable  && <Badge color="blue"  small>✓ Changeable</Badge>}
+                              {f.apiSource   && <Badge color={f.apiSource==='SerpAPI'?'green':f.apiSource==='Duffel'?'blue':f.apiSource==='Kiwi'?'amber':'purple'} small>{f.apiSource}</Badge>}
                             </div>
                             {hist.length >= 2 && <div style={{ marginTop:7 }}><Sparkline data={hist} /></div>}
                           </div>

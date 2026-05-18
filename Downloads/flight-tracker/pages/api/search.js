@@ -1,23 +1,7 @@
 /**
- * /api/search — Flight Search Entry Point
- *
- * Delegates to the orchestrator which runs all available APIs in parallel:
- *   ┌─────────────────────────────────────────────────┐
- *   │  SerpAPI (Google Flights)  ─┐                   │
- *   │  Kiwi Tequila              ─┤──► Merge & Rank   │
- *   │  Duffel NDC                ─┤                   │
- *   │  Claude Agent (web search) ─┘                   │
- *   └─────────────────────────────────────────────────┘
- *
- * Required env vars (add to Vercel):
- *   ANTHROPIC_API_KEY  — always needed (Claude agent + web search)
- *
- * Optional env vars (add any/all for better results):
- *   SERPAPI_KEY         — Google Flights data (serpapi.com, free tier: 100/month)
- *   KIWI_API_KEY        — Budget airlines & combos (tequila.kiwi.com, free)
- *   DUFFEL_ACCESS_TOKEN — NDC live fares (duffel.com, free test account)
+ * /api/search
+ * Delegates to orchestrator — runs SerpAPI + Kiwi + Duffel + Agent in parallel.
  */
-
 import { orchestrateSearch } from '../../lib/orchestrator.js'
 
 export default async function handler(req, res) {
@@ -49,12 +33,18 @@ export default async function handler(req, res) {
     })
 
     return res.status(200).json(result)
-
   } catch (err) {
-    console.error('[search] Fatal error:', err.message)
+    console.error('[search] Fatal:', err.message)
     return res.status(500).json({ error: err.message, flights: [] })
   }
 }
 
-// Increase timeout for parallel API calls (Vercel default is 10s)
-export const config = { api: { responseLimit: false } }
+// Extend Vercel function timeout to 30s (Hobby: 10s, Pro: 60s)
+// This ensures all parallel API calls have time to complete
+export const config = {
+  api: {
+    responseLimit:  false,
+    bodyParser:     true,
+  },
+  maxDuration: 30,
+}
