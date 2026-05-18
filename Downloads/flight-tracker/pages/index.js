@@ -2,10 +2,216 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { requestNotificationPermission, sendBrowserNotification, sendEmailAlert } from '../lib/notify.js'
 
-// ── localStorage ─────────────────────────────────────────────────────────
+// ── localStorage ──────────────────────────────────────────────────────────
 const ls = {
   get: (k, d = null) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } },
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} },
+}
+
+// ── Airport database for autocomplete ────────────────────────────────────
+const AIRPORTS = [
+  { code:'YVR', name:'Vancouver',          country:'Canada',      city:'Vancouver'         },
+  { code:'YYZ', name:'Toronto Pearson',    country:'Canada',      city:'Toronto'           },
+  { code:'YUL', name:'Montreal Trudeau',   country:'Canada',      city:'Montreal'          },
+  { code:'YYC', name:'Calgary',            country:'Canada',      city:'Calgary'           },
+  { code:'YEG', name:'Edmonton',           country:'Canada',      city:'Edmonton'          },
+  { code:'YOW', name:'Ottawa',             country:'Canada',      city:'Ottawa'            },
+  { code:'YHZ', name:'Halifax',            country:'Canada',      city:'Halifax'           },
+  { code:'COK', name:'Cochin / Kochi',     country:'India',       city:'Kochi'             },
+  { code:'DEL', name:'Indira Gandhi',      country:'India',       city:'New Delhi'         },
+  { code:'BOM', name:'Chhatrapati Shivaji',country:'India',       city:'Mumbai'            },
+  { code:'MAA', name:'Chennai',            country:'India',       city:'Chennai'           },
+  { code:'BLR', name:'Kempegowda',         country:'India',       city:'Bengaluru'         },
+  { code:'HYD', name:'Rajiv Gandhi',       country:'India',       city:'Hyderabad'         },
+  { code:'CCJ', name:'Calicut',            country:'India',       city:'Kozhikode'         },
+  { code:'TRV', name:'Trivandrum',         country:'India',       city:'Thiruvananthapuram'},
+  { code:'GOI', name:'Goa',               country:'India',       city:'Goa'               },
+  { code:'AMD', name:'Ahmedabad',          country:'India',       city:'Ahmedabad'         },
+  { code:'PNQ', name:'Pune',              country:'India',       city:'Pune'              },
+  { code:'JAI', name:'Jaipur',            country:'India',       city:'Jaipur'            },
+  { code:'CCU', name:'Kolkata',           country:'India',       city:'Kolkata'           },
+  { code:'LHR', name:'Heathrow',           country:'UK',          city:'London'            },
+  { code:'LGW', name:'Gatwick',            country:'UK',          city:'London'            },
+  { code:'CDG', name:'Charles de Gaulle',  country:'France',      city:'Paris'             },
+  { code:'FRA', name:'Frankfurt',          country:'Germany',     city:'Frankfurt'         },
+  { code:'AMS', name:'Schiphol',           country:'Netherlands', city:'Amsterdam'         },
+  { code:'MAD', name:'Barajas',            country:'Spain',       city:'Madrid'            },
+  { code:'FCO', name:'Fiumicino',          country:'Italy',       city:'Rome'              },
+  { code:'MUC', name:'Munich',             country:'Germany',     city:'Munich'            },
+  { code:'ZRH', name:'Zurich',             country:'Switzerland', city:'Zurich'            },
+  { code:'BCN', name:'Barcelona',          country:'Spain',       city:'Barcelona'         },
+  { code:'DXB', name:'Dubai Intl',         country:'UAE',         city:'Dubai'             },
+  { code:'DOH', name:'Hamad Intl',         country:'Qatar',       city:'Doha'              },
+  { code:'AUH', name:'Zayed Intl',         country:'UAE',         city:'Abu Dhabi'         },
+  { code:'MCT', name:'Muscat',             country:'Oman',        city:'Muscat'            },
+  { code:'BAH', name:'Bahrain Intl',       country:'Bahrain',     city:'Manama'            },
+  { code:'KWI', name:'Kuwait Intl',        country:'Kuwait',      city:'Kuwait City'       },
+  { code:'RUH', name:'King Khalid',        country:'Saudi Arabia',city:'Riyadh'            },
+  { code:'JED', name:'King Abdulaziz',     country:'Saudi Arabia',city:'Jeddah'            },
+  { code:'SIN', name:'Changi',             country:'Singapore',   city:'Singapore'         },
+  { code:'BKK', name:'Suvarnabhumi',       country:'Thailand',    city:'Bangkok'           },
+  { code:'KUL', name:'KLIA',               country:'Malaysia',    city:'Kuala Lumpur'      },
+  { code:'HKG', name:'Hong Kong Intl',     country:'Hong Kong',   city:'Hong Kong'         },
+  { code:'NRT', name:'Narita',             country:'Japan',       city:'Tokyo'             },
+  { code:'HND', name:'Haneda',             country:'Japan',       city:'Tokyo'             },
+  { code:'ICN', name:'Incheon',            country:'South Korea', city:'Seoul'             },
+  { code:'PEK', name:'Capital Intl',       country:'China',       city:'Beijing'           },
+  { code:'PVG', name:'Pudong',             country:'China',       city:'Shanghai'          },
+  { code:'CAN', name:'Baiyun',             country:'China',       city:'Guangzhou'         },
+  { code:'SYD', name:'Kingsford Smith',    country:'Australia',   city:'Sydney'            },
+  { code:'MEL', name:'Melbourne',          country:'Australia',   city:'Melbourne'         },
+  { code:'BNE', name:'Brisbane',           country:'Australia',   city:'Brisbane'          },
+  { code:'AKL', name:'Auckland',           country:'New Zealand', city:'Auckland'          },
+  { code:'JFK', name:'John F Kennedy',     country:'USA',         city:'New York'          },
+  { code:'LAX', name:'Los Angeles Intl',   country:'USA',         city:'Los Angeles'       },
+  { code:'ORD', name:"O'Hare",             country:'USA',         city:'Chicago'           },
+  { code:'SFO', name:'San Francisco Intl', country:'USA',         city:'San Francisco'     },
+  { code:'MIA', name:'Miami Intl',         country:'USA',         city:'Miami'             },
+  { code:'BOS', name:'Logan Intl',         country:'USA',         city:'Boston'            },
+  { code:'SEA', name:'Seattle-Tacoma',     country:'USA',         city:'Seattle'           },
+  { code:'DFW', name:'Dallas Fort Worth',  country:'USA',         city:'Dallas'            },
+  { code:'ATL', name:'Hartsfield-Jackson', country:'USA',         city:'Atlanta'           },
+  { code:'CDG', name:'Charles de Gaulle',  country:'France',      city:'Paris'             },
+  { code:'IST', name:'Istanbul',           country:'Turkey',      city:'Istanbul'          },
+  { code:'CAI', name:'Cairo Intl',         country:'Egypt',       city:'Cairo'             },
+  { code:'NBO', name:'Jomo Kenyatta',      country:'Kenya',       city:'Nairobi'           },
+  { code:'JNB', name:'OR Tambo',           country:'S. Africa',   city:'Johannesburg'      },
+  { code:'CPT', name:'Cape Town Intl',     country:'S. Africa',   city:'Cape Town'         },
+  { code:'GRU', name:'Guarulhos',          country:'Brazil',      city:'São Paulo'         },
+  { code:'GIG', name:'Galeão',             country:'Brazil',      city:'Rio de Janeiro'    },
+  { code:'MEX', name:'Benito Juárez',      country:'Mexico',      city:'Mexico City'       },
+  { code:'YMX', name:'Mirabel',            country:'Canada',      city:'Montreal'          },
+  { code:'CMB', name:'Bandaranaike',       country:'Sri Lanka',   city:'Colombo'           },
+  { code:'DAC', name:'Hazrat Shahjalal',   country:'Bangladesh',  city:'Dhaka'             },
+  { code:'KTM', name:'Tribhuvan',          country:'Nepal',       city:'Kathmandu'         },
+  { code:'MLE', name:'Velana Intl',        country:'Maldives',    city:'Malé'              },
+]
+
+function searchAirports(query) {
+  if (!query || query.length < 2) return []
+  const q = query.toLowerCase()
+  return AIRPORTS.filter(a =>
+    a.code.toLowerCase().includes(q) ||
+    a.city.toLowerCase().includes(q) ||
+    a.name.toLowerCase().includes(q) ||
+    a.country.toLowerCase().includes(q)
+  ).slice(0, 6)
+}
+
+// ── Airport autocomplete input ────────────────────────────────────────────
+function AirportInput({ label, value, onChange }) {
+  const [query,    setQuery]    = useState(value)
+  const [results,  setResults]  = useState([])
+  const [open,     setOpen]     = useState(false)
+  const [selected, setSelected] = useState(!!value)
+  const wrapRef = useRef(null)
+
+  // Sync external value
+  useEffect(() => {
+    if (value && value !== query.slice(0, 3)) {
+      const airport = AIRPORTS.find(a => a.code === value)
+      if (airport) { setQuery(`${airport.code} — ${airport.city}`); setSelected(true) }
+      else { setQuery(value) }
+    }
+  }, [value])
+
+  // Close on outside click
+  useEffect(() => {
+    function handler(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  function handleInput(e) {
+    const val = e.target.value
+    setQuery(val)
+    setSelected(false)
+
+    // If typed exactly 3 uppercase letters treat as IATA code
+    if (/^[A-Za-z]{3}$/.test(val.trim())) {
+      const exact = AIRPORTS.find(a => a.code === val.toUpperCase())
+      if (exact) {
+        select(exact)
+        return
+      }
+    }
+
+    const found = searchAirports(val)
+    setResults(found)
+    setOpen(found.length > 0)
+    // If no match yet, still pass raw value up (user might be typing IATA)
+    if (!found.length) onChange(val.toUpperCase().trim().slice(0, 3))
+  }
+
+  function select(airport) {
+    setQuery(`${airport.code} — ${airport.city}`)
+    setResults([])
+    setOpen(false)
+    setSelected(true)
+    onChange(airport.code)
+  }
+
+  function handleFocus() {
+    setSelected(false)
+    setQuery('')
+    setResults([])
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Escape') setOpen(false)
+    if (e.key === 'Enter' && results.length > 0) select(results[0])
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: 'relative', marginBottom: 0 }}>
+      {label && <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>{label}</div>}
+      <input
+        value={query}
+        onChange={handleInput}
+        onFocus={handleFocus}
+        onKeyDown={handleKeyDown}
+        placeholder="City or airport code"
+        autoComplete="off"
+        spellCheck={false}
+        style={{
+          width: '100%', height: 36, padding: '0 10px',
+          background: 'var(--card)', border: `0.5px solid ${selected ? 'rgba(110,231,183,.4)' : 'var(--border-hi)'}`,
+          borderRadius: 7, color: selected ? 'var(--accent)' : 'var(--text)',
+          fontFamily: selected ? 'DM Mono, monospace' : 'inherit',
+          fontSize: selected ? 13 : 13, fontWeight: selected ? 700 : 400,
+          outline: 'none', boxSizing: 'border-box',
+        }}
+      />
+      {open && results.length > 0 && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+          background: '#0c0e1a', border: '0.5px solid var(--border-hi)',
+          borderRadius: 8, marginTop: 4, overflow: 'hidden',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        }}>
+          {results.map(a => (
+            <div key={a.code}
+              onMouseDown={() => select(a)}
+              style={{
+                padding: '9px 12px', cursor: 'pointer', display: 'flex',
+                alignItems: 'center', gap: 10, borderBottom: '0.5px solid var(--border)',
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(110,231,183,0.07)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            >
+              <span style={{ fontFamily: 'DM Mono, monospace', fontSize: 14, fontWeight: 800, color: 'var(--accent)', minWidth: 36 }}>{a.code}</span>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{a.city}</div>
+                <div style={{ fontSize: 10, color: 'var(--muted)' }}>{a.name} · {a.country}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Small UI components ───────────────────────────────────────────────────
@@ -15,7 +221,6 @@ const SLabel  = ({ children }) => (
     {children}
   </div>
 )
-
 function Field({ label, children }) {
   return (
     <div style={{ marginBottom: 9 }}>
@@ -24,14 +229,12 @@ function Field({ label, children }) {
     </div>
   )
 }
-
 const inputStyle = {
   width: '100%', height: 34, padding: '0 10px',
   background: 'var(--card)', border: '0.5px solid var(--border-hi)',
   borderRadius: 7, color: 'var(--text)', fontFamily: 'inherit', fontSize: 13,
   outline: 'none', boxSizing: 'border-box',
 }
-
 function Badge({ children, color = 'green', small = false }) {
   const bg = color === 'green' ? 'var(--green-dim)' : color === 'amber' ? 'var(--amber-dim)'
     : color === 'red' ? 'var(--red-dim)' : color === 'blue' ? 'var(--blue-dim)'
@@ -46,7 +249,6 @@ function Badge({ children, color = 'green', small = false }) {
     </span>
   )
 }
-
 function PriceDelta({ cur, prev }) {
   if (!prev || cur === prev) return null
   const diff = cur - prev, up = diff > 0
@@ -55,19 +257,18 @@ function PriceDelta({ cur, prev }) {
       padding: '1px 6px', borderRadius: 4, marginLeft: 5,
       background: up ? 'var(--red-dim)' : 'var(--green-dim)',
       color: up ? 'var(--red)' : 'var(--green)' }}>
-      {up ? '▲' : '▼'} CA${Math.abs(diff).toLocaleString()} ({up ? '+' : ''}{((diff/prev)*100).toFixed(1)}%)
+      {up ? '▲' : '▼'} CA${Math.abs(diff).toLocaleString()} ({up?'+':''}{((diff/prev)*100).toFixed(1)}%)
     </span>
   )
 }
-
 function Sparkline({ data }) {
   if (!data || data.length < 2) return null
-  const pts = data.map((d, i) => ({ i, p: d.p }))
+  const pts = data.map((d,i) => ({ i, p: d.p }))
   const prices = data.map(d => d.p)
-  const last = prices[prices.length - 1], prev = prices[prices.length - 2]
+  const last = prices[prices.length-1], prev = prices[prices.length-2]
   const stroke = last > prev ? 'var(--red)' : last < prev ? 'var(--green)' : 'var(--muted)'
   return (
-    <div style={{ width: 90, height: 26 }}>
+    <div style={{ width:90, height:26 }}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={pts}>
           <Line type="monotone" dataKey="p" stroke={stroke} strokeWidth={1.5} dot={false} />
@@ -78,42 +279,34 @@ function Sparkline({ data }) {
     </div>
   )
 }
-
-// ── Layover display helper ────────────────────────────────────────────────
 function LayoverInfo({ flight }) {
-  if (!flight.stops || flight.stops === 0) return null
+  if (!flight.stops) return null
   const min = flight.minLayoverMins
   if (!min) return null
-  const h = Math.floor(min / 60), m = min % 60
+  const h = Math.floor(min/60), m = min%60
   const color = min < 90 ? 'amber' : min < 180 ? 'green' : 'blue'
-  return (
-    <Badge color={color} small>
-      ⏱ {h > 0 ? `${h}h ` : ''}{m > 0 ? `${m}m` : ''} layover
-    </Badge>
-  )
+  return <Badge color={color} small>⏱ {h>0?`${h}h `:''}{m>0?`${m}m`:''} layover</Badge>
 }
-
-// ── Segment timeline ──────────────────────────────────────────────────────
 function SegmentTimeline({ segments }) {
   if (!segments?.length) return null
   return (
-    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '0.5px solid var(--border)' }}>
-      {segments.map((seg, i) => (
-        <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: i < segments.length - 1 ? 6 : 0 }}>
-          <div style={{ width: 32, fontSize: 10, fontFamily: 'DM Mono,monospace', color: 'var(--accent)', flexShrink: 0, paddingTop: 2 }}>{seg.from}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-              <span style={{ color: 'var(--text)', fontWeight: 700 }}>{seg.dep}</span>
-              <span style={{ color: 'var(--muted)', fontSize: 10 }}>{seg.airline} {seg.flight}</span>
-              <span style={{ color: 'var(--text)', fontWeight: 700 }}>{seg.arr}</span>
+    <div style={{ marginTop:10, paddingTop:10, borderTop:'0.5px solid var(--border)' }}>
+      {segments.map((seg,i) => (
+        <div key={i} style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom: i<segments.length-1?6:0 }}>
+          <div style={{ width:36, fontSize:10, fontFamily:'DM Mono,monospace', color:'var(--accent)', flexShrink:0, paddingTop:2 }}>{seg.from}</div>
+          <div style={{ flex:1 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', fontSize:11 }}>
+              <span style={{ color:'var(--text)', fontWeight:700 }}>{seg.dep}</span>
+              <span style={{ color:'var(--muted)', fontSize:10 }}>{seg.airline} {seg.flight}</span>
+              <span style={{ color:'var(--text)', fontWeight:700 }}>{seg.arr}</span>
             </div>
             {seg.layoverMins > 0 && (
-              <div style={{ fontSize: 10, color: 'var(--amber)', marginTop: 2, textAlign: 'center' }}>
-                ↕ layover {Math.floor(seg.layoverMins/60)}h {seg.layoverMins%60}m at {seg.to || segments[i+1]?.from}
+              <div style={{ fontSize:10, color:'var(--amber)', marginTop:2, textAlign:'center' }}>
+                ↕ layover {Math.floor(seg.layoverMins/60)}h {seg.layoverMins%60}m at {seg.to}
               </div>
             )}
           </div>
-          <div style={{ width: 32, fontSize: 10, fontFamily: 'DM Mono,monospace', color: 'var(--accent)', flexShrink: 0, paddingTop: 2, textAlign: 'right' }}>{seg.to}</div>
+          <div style={{ width:36, fontSize:10, fontFamily:'DM Mono,monospace', color:'var(--accent)', flexShrink:0, paddingTop:2, textAlign:'right' }}>{seg.to}</div>
         </div>
       ))}
     </div>
@@ -122,55 +315,48 @@ function SegmentTimeline({ segments }) {
 
 // ── Main app ──────────────────────────────────────────────────────────────
 export default function FlightTracker() {
-  // Search params
-  const [origin,         setOrigin]         = useState('YVR')
-  const [destination,    setDestination]    = useState('COK')
-  const [depDate,        setDepDate]        = useState('2026-12-14')
-  const [retDate,        setRetDate]        = useState('')
-  const [cabin,          setCabin]          = useState('economy')
-  const [passengers,     setPassengers]     = useState('1')
-  const [minLayover,     setMinLayover]     = useState(60)   // minutes
-  const [maxLayover,     setMaxLayover]     = useState('')   // empty = no limit
-  const [refreshSecs,    setRefreshSecs]    = useState(30)
+  const [origin,          setOrigin]          = useState('YVR')
+  const [destination,     setDestination]     = useState('COK')
+  const [depDate,         setDepDate]         = useState('2026-12-14')
+  const [retDate,         setRetDate]         = useState('')
+  const [cabin,           setCabin]           = useState('economy')
+  const [passengers,      setPassengers]      = useState('1')
+  const [minLayover,      setMinLayover]      = useState(60)
+  const [maxLayover,      setMaxLayover]      = useState('')
+  const [refreshSecs,     setRefreshSecs]     = useState(30)
+  const [isTracking,      setIsTracking]      = useState(false)
+  const [loading,         setLoading]         = useState(false)
+  const [flights,         setFlights]         = useState([])
+  const [meta,            setMeta]            = useState(null)
+  const [logs,            setLogs]            = useState([])
+  const [history,         setHistory]         = useState({})
+  const [prevPrices,      setPrevPrices]      = useState({})
+  const [tickCount,       setTickCount]       = useState(0)
+  const [lastFetch,       setLastFetch]       = useState(null)
+  const [countdown,       setCountdown]       = useState(0)
+  const [sortBy,          setSortBy]          = useState('price')
+  const [activeTab,       setActiveTab]       = useState('flights')
+  const [savedRoutes,     setSavedRoutes]     = useState([])
+  const [alerts,          setAlerts]          = useState([])
+  const [flashMap,        setFlashMap]        = useState({})
+  const [expandedFlight,  setExpandedFlight]  = useState(null)
+  const [notifPerm,       setNotifPerm]       = useState('default')
+  const [alertEmail,      setAlertEmail]      = useState('')
+  const [newAlertThresh,  setNewAlertThresh]  = useState('')
+  const [newAlertAirline, setNewAlertAirline] = useState('')
 
-  // State
-  const [isTracking,     setIsTracking]     = useState(false)
-  const [loading,        setLoading]        = useState(false)
-  const [flights,        setFlights]        = useState([])
-  const [meta,           setMeta]           = useState(null)
-  const [logs,           setLogs]           = useState([])
-  const [history,        setHistory]        = useState({})
-  const [prevPrices,     setPrevPrices]     = useState({})
-  const [tickCount,      setTickCount]      = useState(0)
-  const [lastFetch,      setLastFetch]      = useState(null)
-  const [countdown,      setCountdown]      = useState(0)
-  const [sortBy,         setSortBy]         = useState('price')
-  const [activeTab,      setActiveTab]      = useState('flights')
-  const [savedRoutes,    setSavedRoutes]    = useState([])
-  const [alerts,         setAlerts]         = useState([])
-  const [flashMap,       setFlashMap]       = useState({})
-  const [expandedFlight, setExpandedFlight] = useState(null)
-  const [notifPerm,      setNotifPerm]      = useState('default')
-  const [alertEmail,     setAlertEmail]     = useState('')
-  const [newAlertThresh, setNewAlertThresh] = useState('')
-  const [newAlertAirline,setNewAlertAirline]= useState('')
+  const timerRef  = useRef(null)
+  const cdRef     = useRef(null)
+  const logRef    = useRef(null)
 
-  const timerRef   = useRef(null)
-  const cdRef      = useRef(null)
-  const logRef     = useRef(null)
-
-  // ── Init ────────────────────────────────────────────────────────────────
   useEffect(() => {
     setHistory(ls.get('ft_history', {}))
     setSavedRoutes(ls.get('ft_routes', []))
     setAlerts(ls.get('ft_alerts', []))
     setAlertEmail(ls.get('ft_email', ''))
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      setNotifPerm(Notification.permission)
-    }
+    if (typeof window !== 'undefined' && 'Notification' in window) setNotifPerm(Notification.permission)
     addLog('ok',   'FlightTrack v3 ready')
-    addLog('info', 'Sources: Duffel API → Claude agent → Estimates')
-    addLog('info', 'All airlines searched dynamically — no fixed list')
+    addLog('info', 'Type a city name or IATA code to search airports')
   }, [])
 
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [logs])
@@ -180,36 +366,31 @@ export default function FlightTracker() {
     setLogs(l => [...l.slice(-120), { id: Date.now() + Math.random(), ts, type, msg }])
   }, [])
 
-  // ── Fetch ───────────────────────────────────────────────────────────────
   const doFetch = useCallback(async () => {
     setLoading(true)
-    addLog('info', `Tick #${tickCount + 1} — searching all airlines...`)
-
+    addLog('info', `Tick #${tickCount + 1} — searching all airlines for ${origin} → ${destination}...`)
     try {
       const res = await fetch('/api/search', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          origin: origin.toUpperCase(), destination: destination.toUpperCase(),
-          date: depDate, returnDate: retDate || undefined,
-          cabin, passengers, minLayoverMins: minLayover,
+          origin, destination, date: depDate,
+          returnDate: retDate || undefined,
+          cabin, passengers,
+          minLayoverMins: minLayover,
           maxLayoverMins: maxLayover ? parseInt(maxLayover) : null,
           currency: 'CAD',
         }),
       })
-
       const result = await res.json()
       if (!res.ok || result.error) throw new Error(result.error || `HTTP ${res.status}`)
-
       const newFlights = result.flights || []
-      addLog('ok', `${result.source} — ${newFlights.length} flights · ${result.webSearches ? result.webSearches + ' web searches' : 'no web search'}`)
+      addLog('ok', `${result.source} — ${newFlights.length} flights found`)
 
-      // Flash + prev price tracking
       setFlights(prev => {
         const prevMap = {}
         prev.forEach(f => { prevMap[f.id || f.code] = f.price })
         setPrevPrices(prevMap)
-
         const flashes = {}
         newFlights.forEach(f => {
           const key = f.id || f.code
@@ -218,73 +399,37 @@ export default function FlightTracker() {
             else if (f.price > prevMap[key]) flashes[key] = 'r'
           }
         })
-        if (Object.keys(flashes).length) {
-          setFlashMap(flashes)
-          setTimeout(() => setFlashMap({}), 800)
-        }
-
-        // Check threshold alerts
+        if (Object.keys(flashes).length) { setFlashMap(flashes); setTimeout(() => setFlashMap({}), 800) }
         const currentAlerts = ls.get('ft_alerts', [])
-        const email         = ls.get('ft_email', '')
+        const email = ls.get('ft_email', '')
         newFlights.forEach(async f => {
           for (const a of currentAlerts) {
-            if (f.price <= a.threshold &&
-                (!a.airline || a.airline === 'any' || a.code === a.airline || f.airline.includes(a.airline))) {
-              addLog('ok', `🔔 ALERT TRIGGERED: ${f.airline} CA$${f.price.toLocaleString()} ≤ threshold CA$${a.threshold.toLocaleString()}`)
-
-              // Browser notification
-              sendBrowserNotification(
-                `✈ Price Drop! ${origin.toUpperCase()}→${destination.toUpperCase()}`,
-                `${f.airline}: CA$${f.price.toLocaleString()} (below your CA$${a.threshold.toLocaleString()} target)`,
-                f.bookUrl
-              )
-
-              // Email notification
-              if (email) {
-                const sent = await sendEmailAlert({
-                  to:        email,
-                  airline:   f.airline,
-                  price:     f.price,
-                  route:     `${origin.toUpperCase()} → ${destination.toUpperCase()}`,
-                  date:      depDate,
-                  bookUrl:   f.bookUrl,
-                  threshold: a.threshold,
-                })
-                if (sent) addLog('ok', `📧 Email alert sent to ${email}`)
-              }
+            if (f.price <= a.threshold && (!a.airline || a.airline === 'any' || f.code === a.airline || f.airline.includes(a.airline))) {
+              addLog('ok', `🔔 ALERT: ${f.airline} CA$${f.price.toLocaleString()} ≤ threshold CA$${a.threshold.toLocaleString()}`)
+              sendBrowserNotification(`✈ Price Drop! ${origin}→${destination}`, `${f.airline}: CA$${f.price.toLocaleString()}`, f.bookUrl)
+              if (email) { const sent = await sendEmailAlert({ to: email, airline: f.airline, price: f.price, route: `${origin} → ${destination}`, date: depDate, bookUrl: f.bookUrl, threshold: a.threshold }); if (sent) addLog('ok', `📧 Email sent to ${email}`) }
             }
           }
         })
-
         return newFlights
       })
 
-      // Update history
       setHistory(prev => {
         const now = Date.now()
         const upd = { ...prev }
-        newFlights.forEach(f => {
-          const key = f.id || f.code
-          upd[key] = [...(upd[key] || []).slice(-29), { t: now, p: f.price, airline: f.airline }]
-        })
+        newFlights.forEach(f => { const key = f.id || f.code; upd[key] = [...(upd[key]||[]).slice(-29), { t: now, p: f.price, airline: f.airline }] })
         ls.set('ft_history', upd)
         return upd
       })
 
-      setMeta(result)
-      setLastFetch(new Date())
-      setTickCount(t => t + 1)
-    } catch (err) {
-      addLog('err', err.message)
-    }
+      setMeta(result); setLastFetch(new Date()); setTickCount(t => t + 1)
+    } catch (err) { addLog('err', err.message) }
     setLoading(false)
   }, [origin, destination, depDate, retDate, cabin, passengers, minLayover, maxLayover, tickCount, addLog])
 
-  // ── Tracking ─────────────────────────────────────────────────────────────
   const startTracking = useCallback(async () => {
-    setIsTracking(true)
-    setTickCount(0)
-    addLog('info', `Tracking ${origin.toUpperCase()}→${destination.toUpperCase()} · min layover ${minLayover}min · refresh ${refreshSecs}s`)
+    setIsTracking(true); setTickCount(0)
+    addLog('info', `Tracking ${origin} → ${destination} · min layover ${minLayover}min · refresh ${refreshSecs}s`)
     await doFetch()
     setCountdown(refreshSecs)
     cdRef.current    = setInterval(() => setCountdown(c => c <= 1 ? refreshSecs : c - 1), 1000)
@@ -293,33 +438,22 @@ export default function FlightTracker() {
 
   const stopTracking = useCallback(() => {
     clearInterval(timerRef.current); clearInterval(cdRef.current)
-    setIsTracking(false); setCountdown(0)
-    addLog('warn', 'Tracking paused')
+    setIsTracking(false); setCountdown(0); addLog('warn', 'Tracking paused')
   }, [addLog])
 
   useEffect(() => () => { clearInterval(timerRef.current); clearInterval(cdRef.current) }, [])
 
-  // ── Saved routes ─────────────────────────────────────────────────────────
   const saveRoute = () => {
-    const r = { id: Date.now(), origin: origin.toUpperCase(), destination: destination.toUpperCase(), date: depDate, cabin, minLayover }
-    const upd = [r, ...savedRoutes.filter(x => !(x.origin === r.origin && x.destination === r.destination)).slice(0, 4)]
+    const r = { id: Date.now(), origin, destination, date: depDate, cabin, minLayover }
+    const upd = [r, ...savedRoutes.filter(x => !(x.origin===r.origin && x.destination===r.destination)).slice(0,4)]
     setSavedRoutes(upd); ls.set('ft_routes', upd)
-    addLog('ok', `Route saved: ${r.origin}→${r.destination}`)
+    addLog('ok', `Route saved: ${r.origin} → ${r.destination}`)
   }
   const loadRoute = r => { setOrigin(r.origin); setDestination(r.destination); setDepDate(r.date); setCabin(r.cabin); if (r.minLayover) setMinLayover(r.minLayover) }
 
-  // ── Alerts ────────────────────────────────────────────────────────────────
   const addAlert = () => {
     if (!newAlertThresh) return
-    const a = {
-      id:        Date.now(),
-      airline:   newAlertAirline || 'any',
-      threshold: parseInt(newAlertThresh),
-      route:     `${origin.toUpperCase()}→${destination.toUpperCase()}`,
-      date:      depDate,
-      created:   new Date().toISOString(),
-      triggered: false,
-    }
+    const a = { id: Date.now(), airline: newAlertAirline || 'any', threshold: parseInt(newAlertThresh), route: `${origin}→${destination}`, date: depDate, created: new Date().toISOString() }
     const upd = [...alerts, a]; setAlerts(upd); ls.set('ft_alerts', upd)
     addLog('ok', `Alert: ${a.airline === 'any' ? 'any airline' : a.airline} below CA$${a.threshold.toLocaleString()}`)
     setNewAlertThresh(''); setNewAlertAirline('')
@@ -333,7 +467,6 @@ export default function FlightTracker() {
     else addLog('warn', 'Notification permission denied')
   }
 
-  // ── Derived ───────────────────────────────────────────────────────────────
   const sorted = [...flights].sort((a, b) => {
     if (sortBy === 'price')    return a.price - b.price
     if (sortBy === 'duration') return (a.durationMins||0) - (b.durationMins||0)
@@ -344,7 +477,7 @@ export default function FlightTracker() {
   })
 
   const cheapest = flights.length ? Math.min(...flights.map(f => f.price)) : null
-  const average  = flights.length ? Math.round(flights.reduce((s,f) => s+f.price, 0) / flights.length) : null
+  const average  = flights.length ? Math.round(flights.reduce((s,f) => s+f.price,0) / flights.length) : null
   const drops    = flights.filter(f => { const k=f.id||f.code; return prevPrices[k] && f.price < prevPrices[k] }).length
   const rises    = flights.filter(f => { const k=f.id||f.code; return prevPrices[k] && f.price > prevPrices[k] }).length
   const directCount = flights.filter(f => f.stops === 0).length
@@ -361,19 +494,16 @@ export default function FlightTracker() {
   })()
   const chartColors = ['#22c55e','#3b82f6','#f59e0b','#ef4444','#a855f7','#06b6d4','#f97316','#ec4899']
 
-  // ── Shared styles ─────────────────────────────────────────────────────────
-  const card = { background: 'var(--surface)', border: '0.5px solid var(--border)', borderRadius: 10 }
-  const ghostBtn = { background: 'transparent', border: '0.5px solid var(--border-hi)', borderRadius: 7, color: 'var(--muted)', fontFamily: 'inherit', cursor: 'pointer' }
+  const card      = { background: 'var(--surface)', border: '0.5px solid var(--border)', borderRadius: 10 }
+  const ghostBtn  = { background: 'transparent', border: '0.5px solid var(--border-hi)', borderRadius: 7, color: 'var(--muted)', fontFamily: 'inherit', cursor: 'pointer' }
   const primaryBtn = { background: 'linear-gradient(135deg,#6ee7b7,#3b82f6)', border: 'none', borderRadius: 7, color: '#07080f', fontFamily: 'inherit', fontWeight: 800, cursor: 'pointer' }
   const dangerBtn  = { background: 'var(--red-dim)', border: '0.5px solid rgba(239,68,68,.3)', borderRadius: 7, color: 'var(--red)', fontFamily: 'inherit', fontWeight: 700, cursor: 'pointer' }
 
   return (
     <div style={{ fontFamily:"'Syne','DM Sans',system-ui,sans-serif", background:'var(--bg)', minHeight:'100vh', color:'var(--text)' }}>
 
-      {/* ── Topbar ── */}
-      <header style={{ ...card, borderRadius:0, borderLeft:0, borderRight:0, borderTop:0,
-        padding:'0 1.5rem', height:52, display:'flex', alignItems:'center',
-        justifyContent:'space-between', position:'sticky', top:0, zIndex:50 }}>
+      {/* Topbar */}
+      <header style={{ ...card, borderRadius:0, borderLeft:0, borderRight:0, borderTop:0, padding:'0 1.5rem', height:52, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:50 }}>
         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
           <span style={{ fontSize:22 }}>✈</span>
           <span style={{ fontSize:16, fontWeight:800, letterSpacing:'-.03em' }}>
@@ -391,21 +521,17 @@ export default function FlightTracker() {
         </div>
       </header>
 
-      <div style={{ display:'grid', gridTemplateColumns:'294px 1fr', minHeight:'calc(100vh - 52px)' }}>
+      <div style={{ display:'grid', gridTemplateColumns:'300px 1fr', minHeight:'calc(100vh - 52px)' }}>
 
-        {/* ══ Sidebar ══ */}
+        {/* Sidebar */}
         <aside style={{ background:'var(--surface)', borderRight:'0.5px solid var(--border)', padding:'1.25rem', overflowY:'auto' }}>
 
           <SLabel>Route</SLabel>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 16px 1fr', gap:6, alignItems:'end', marginBottom:10 }}>
-            {[['From',origin,setOrigin,'YVR'],['To',destination,setDestination,'COK']].map(([lbl,val,set,ph],i) => (
-              <div key={i}>
-                <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>{lbl}</div>
-                <input value={val} onChange={e => set(e.target.value.toUpperCase())} maxLength={3} placeholder={ph}
-                  style={{ ...inputStyle, fontFamily:'DM Mono,monospace', fontSize:16, fontWeight:800, color:'var(--accent)', letterSpacing:'.08em', textTransform:'uppercase' }} />
-              </div>
-            ))}
-            <div style={{ textAlign:'center', color:'var(--hint)', paddingBottom:7, fontSize:14 }}>→</div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:6, alignItems:'end', marginBottom:10 }}>
+            <AirportInput label="From" value={origin} onChange={setOrigin} />
+            <div style={{ textAlign:'center', color:'var(--hint)', paddingBottom:4, fontSize:18, paddingTop:20 }}>→</div>
+            <AirportInput label="To" value={destination} onChange={setDestination} />
           </div>
 
           <Field label="Departure">
@@ -430,19 +556,16 @@ export default function FlightTracker() {
 
           <Divider />
           <SLabel>Layover Rules</SLabel>
-
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:4 }}>
             <Field label="Min layover (min)">
-              <input type="number" value={minLayover} onChange={e=>setMinLayover(Math.max(0,parseInt(e.target.value)||0))}
-                min={0} max={600} style={inputStyle} />
+              <input type="number" value={minLayover} onChange={e=>setMinLayover(Math.max(0,parseInt(e.target.value)||0))} min={0} max={600} style={inputStyle} />
             </Field>
             <Field label="Max layover (min)">
-              <input type="number" value={maxLayover} onChange={e=>setMaxLayover(e.target.value)}
-                placeholder="none" min={minLayover} max={1440} style={inputStyle} />
+              <input type="number" value={maxLayover} onChange={e=>setMaxLayover(e.target.value)} placeholder="no limit" min={minLayover} style={inputStyle} />
             </Field>
           </div>
           <div style={{ fontSize:11, color:'var(--muted)', marginBottom:10, lineHeight:1.5 }}>
-            Flights with layovers shorter than {minLayover} min will be excluded{maxLayover ? ` · max ${maxLayover} min` : ''}
+            Flights with layovers &lt; {minLayover}min excluded{maxLayover ? ` · max ${maxLayover}min` : ''}
           </div>
 
           <Divider />
@@ -458,14 +581,12 @@ export default function FlightTracker() {
               </button>
             : <button onClick={stopTracking} style={{ ...dangerBtn, width:'100%', height:38, fontSize:13, marginBottom:7 }}>■ Stop Tracking</button>
           }
-
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
-            <button onClick={()=>!isTracking&&!loading&&doFetch()} disabled={isTracking||loading}
-              style={{ ...ghostBtn, height:30, fontSize:11, opacity:(isTracking||loading)?.4:1 }}>↻ Once</button>
+            <button onClick={()=>!isTracking&&!loading&&doFetch()} disabled={isTracking||loading} style={{ ...ghostBtn, height:30, fontSize:11, opacity:(isTracking||loading)?.4:1 }}>↻ Once</button>
             <button onClick={saveRoute} style={{ ...ghostBtn, height:30, fontSize:11 }}>★ Save</button>
           </div>
 
-          {savedRoutes.length>0 && <>
+          {savedRoutes.length > 0 && <>
             <Divider />
             <SLabel>Saved Routes</SLabel>
             {savedRoutes.map(r => (
@@ -487,18 +608,17 @@ export default function FlightTracker() {
           </div>
         </aside>
 
-        {/* ══ Main ══ */}
+        {/* Main */}
         <main style={{ padding:'1.25rem', overflowY:'auto' }}>
 
-          {/* Metrics */}
-          {flights.length>0 && (
+          {flights.length > 0 && (
             <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:10, marginBottom:14 }}>
               {[
-                { label:'Cheapest',       value:`CA$${cheapest?.toLocaleString()}`,   sub:flights.find(f=>f.price===cheapest)?.airline, color:'var(--green)' },
-                { label:'Average',        value:`CA$${average?.toLocaleString()}`,    sub:`${flights.length} options` },
-                { label:'Direct flights', value:String(directCount),                  sub:`${flights.length-directCount} with stops`, color:directCount>0?'var(--blue)':undefined },
-                { label:'Movement',       value:drops>0||rises>0?`${drops>0?`▼${drops}`:''} ${rises>0?`▲${rises}`:''}`.trim():'—', sub:'this tick', color:drops>0?'var(--green)':rises>0?'var(--red)':undefined },
-                { label:'Signal',         value:meta?.recommendation||'—',           sub:`${meta?.priceLevel||'—'} season`, color:meta?.priceLevel==='peak'?'var(--red)':meta?.priceLevel==='high'?'var(--amber)':'var(--green)' },
+                { label:'Cheapest', value:`CA$${cheapest?.toLocaleString()}`, sub:flights.find(f=>f.price===cheapest)?.airline, color:'var(--green)' },
+                { label:'Average',  value:`CA$${average?.toLocaleString()}`,  sub:`${flights.length} options` },
+                { label:'Direct flights', value:String(directCount), sub:`${flights.length-directCount} with stops`, color:directCount>0?'var(--blue)':undefined },
+                { label:'Movement', value:drops>0||rises>0?`${drops>0?`▼${drops}`:''} ${rises>0?`▲${rises}`:''}`.trim():'—', sub:'this tick', color:drops>0?'var(--green)':rises>0?'var(--red)':undefined },
+                { label:'Signal',   value:meta?.recommendation||'—', sub:`${meta?.priceLevel||'—'} season`, color:meta?.priceLevel==='peak'?'var(--red)':meta?.priceLevel==='high'?'var(--amber)':'var(--green)' },
               ].map(m => (
                 <div key={m.label} style={{ ...card, padding:'11px 13px' }}>
                   <div style={{ fontSize:10, color:'var(--muted)', textTransform:'uppercase', letterSpacing:'.06em', marginBottom:4 }}>{m.label}</div>
@@ -509,12 +629,11 @@ export default function FlightTracker() {
             </div>
           )}
 
-          {/* Agent summary */}
           {meta?.summary && (
             <div style={{ background:'rgba(110,231,183,.05)', border:'0.5px solid rgba(110,231,183,.15)', borderRadius:9, padding:'9px 13px', marginBottom:12, fontSize:12, color:'#9ca3af', lineHeight:1.7 }}>
               <span style={{ color:'var(--accent)', fontWeight:800 }}>Agent: </span>{meta.summary}
               {meta.source==='estimate' && <span style={{ color:'var(--hint)' }}> — add ANTHROPIC_API_KEY for live search</span>}
-              {meta.source==='duffel'   && <span style={{ color:'var(--blue)',  marginLeft:6, fontSize:10, fontWeight:700 }}>● Duffel Live</span>}
+              {meta.source==='duffel' && <span style={{ color:'var(--blue)', marginLeft:6, fontSize:10, fontWeight:700 }}>● Duffel Live</span>}
               {meta.source==='claude_websearch' && <span style={{ color:'var(--green)', marginLeft:6, fontSize:10, fontWeight:700 }}>● Web Searched</span>}
             </div>
           )}
@@ -528,13 +647,13 @@ export default function FlightTracker() {
             ))}
           </div>
 
-          {/* ── Flights Tab ── */}
+          {/* Flights tab */}
           {activeTab==='flights' && (
             <>
-              {flights.length>0 && (
+              {flights.length > 0 && (
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:12, color:'var(--muted)' }}>
-                    <span>{flights.length} options · {origin.toUpperCase()}→{destination.toUpperCase()} · min {minLayover}min layover</span>
+                    <span>{flights.length} options · {origin} → {destination} · min {minLayover}min layover</span>
                     {isTracking && <Badge color="green" small>● LIVE</Badge>}
                     {meta?.directAvailable && <Badge color="blue" small>Direct available</Badge>}
                   </div>
@@ -544,20 +663,20 @@ export default function FlightTracker() {
                 </div>
               )}
 
-              {sorted.length===0
+              {sorted.length === 0
                 ? <div style={{ textAlign:'center', padding:'4rem 1rem', color:'var(--hint)' }}>
                     <div style={{ fontSize:52, marginBottom:14 }}>✈</div>
-                    <div style={{ fontSize:15, fontWeight:700 }}>Ready to search all airlines</div>
-                    <div style={{ fontSize:13, marginTop:6 }}>Set your route, configure layover rules, then Start Tracking</div>
+                    <div style={{ fontSize:15, fontWeight:700 }}>Ready to search</div>
+                    <div style={{ fontSize:13, marginTop:6 }}>Type a city or airport code in From/To fields, then click Start Tracking</div>
                   </div>
                 : sorted.map(f => {
-                    const fkey   = f.id || f.code
-                    const prev   = prevPrices[fkey]
-                    const hist   = history[fkey] || []
-                    const flash  = flashMap[fkey]
-                    const isExp  = expandedFlight === fkey
-                    const isBest = f.priceCategory==='cheapest'
-                    const isVal  = f.priceCategory==='best_value'
+                    const fkey  = f.id || f.code
+                    const prev  = prevPrices[fkey]
+                    const hist  = history[fkey] || []
+                    const flash = flashMap[fkey]
+                    const isExp = expandedFlight === fkey
+                    const isBest = f.priceCategory === 'cheapest'
+                    const isVal  = f.priceCategory === 'best_value'
                     const borderC = isBest?'rgba(34,197,94,.4)':isVal?'rgba(59,130,246,.4)':'var(--border)'
                     const stopC   = f.stops===0?'green':f.stops===1?'amber':'red'
                     const stopLbl = f.stops===0?'Direct':f.stops===1?`1 stop · ${f.via||''}`:`${f.stops} stops · ${f.via||''}`
@@ -566,15 +685,12 @@ export default function FlightTracker() {
                       <div key={fkey}
                         className={flash==='g'?'anim-flash-g':flash==='r'?'anim-flash-r':'anim-fade'}
                         style={{ background:'var(--surface)', border:`0.5px solid ${borderC}`, borderRadius:10, padding:'13px 15px', marginBottom:8, cursor:'pointer' }}
-                        onClick={()=>setExpandedFlight(isExp ? null : fkey)}>
+                        onClick={()=>setExpandedFlight(isExp?null:fkey)}>
 
                         <div style={{ display:'grid', gridTemplateColumns:'44px 1fr auto', gap:'0 13px', alignItems:'center' }}>
-                          {/* Icon */}
                           <div style={{ width:40, height:40, borderRadius:7, background:'var(--card)', border:'0.5px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>
                             {f.code}
                           </div>
-
-                          {/* Info */}
                           <div>
                             <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:5 }}>
                               <span style={{ fontSize:15, fontWeight:800, letterSpacing:'-.02em' }}>{f.departure}</span>
@@ -592,10 +708,8 @@ export default function FlightTracker() {
                               {f.refundable  && <Badge color="green" small>✓ Refundable</Badge>}
                               {f.changeable  && <Badge color="blue"  small>✓ Changeable</Badge>}
                             </div>
-                            {hist.length>=2 && <div style={{ marginTop:7 }}><Sparkline data={hist} /></div>}
+                            {hist.length >= 2 && <div style={{ marginTop:7 }}><Sparkline data={hist} /></div>}
                           </div>
-
-                          {/* Price */}
                           <div style={{ textAlign:'right', minWidth:138 }} onClick={e=>e.stopPropagation()}>
                             {(isBest||isVal) && (
                               <div style={{ fontSize:9, fontWeight:800, letterSpacing:'.07em', textTransform:'uppercase', color:isBest?'var(--green)':'var(--blue)', marginBottom:3 }}>
@@ -606,15 +720,10 @@ export default function FlightTracker() {
                             <PriceDelta cur={f.price} prev={prev} />
                             <div style={{ fontSize:10, color:'var(--muted)', marginTop:2 }}>per person · {cabin}</div>
                             <div style={{ display:'flex', gap:5, justifyContent:'flex-end', marginTop:6 }}>
-                              <a href={f.bookUrl} target="_blank" rel="noopener"
-                                style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit' }}>
-                                Book →
-                              </a>
+                              <a href={f.bookUrl} target="_blank" rel="noopener" style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit' }}>Book →</a>
                             </div>
                           </div>
                         </div>
-
-                        {/* Expanded segment timeline */}
                         {isExp && <SegmentTimeline segments={f.segments} />}
                       </div>
                     )
@@ -623,10 +732,10 @@ export default function FlightTracker() {
             </>
           )}
 
-          {/* ── History Tab ── */}
+          {/* History tab */}
           {activeTab==='history' && (
             <>
-              {histChartData.length>1 ? (
+              {histChartData.length > 1 ? (
                 <div style={{ ...card, padding:'1rem 1.25rem', marginBottom:14 }}>
                   <div style={{ fontSize:12, fontWeight:700, marginBottom:12 }}>Price trend — all airlines tracked</div>
                   <ResponsiveContainer width="100%" height={200}>
@@ -640,15 +749,13 @@ export default function FlightTracker() {
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-              ) : <div style={{ textAlign:'center', padding:'2rem', color:'var(--hint)', fontSize:13, marginBottom:14 }}>Price chart appears after 2+ ticks of data</div>}
-
+              ) : <div style={{ textAlign:'center', padding:'2rem', color:'var(--hint)', fontSize:13, marginBottom:14 }}>Chart appears after 2+ refresh ticks</div>}
               {Object.entries(history).map(([key, hist]) => {
-                const f    = flights.find(fl => (fl.id||fl.code)===key)
+                const f = flights.find(fl => (fl.id||fl.code)===key)
                 if (!hist.length) return null
-                const min  = Math.min(...hist.map(h=>h.p))
-                const max  = Math.max(...hist.map(h=>h.p))
+                const min = Math.min(...hist.map(h=>h.p)), max = Math.max(...hist.map(h=>h.p))
                 const last = hist[hist.length-1].p
-                const change = hist.length>1 ? last - hist[hist.length-2].p : 0
+                const change = hist.length>1 ? last-hist[hist.length-2].p : 0
                 return (
                   <div key={key} style={{ ...card, padding:'12px 14px', marginBottom:8, display:'flex', alignItems:'center', gap:13 }}>
                     <div style={{ width:40, height:40, borderRadius:7, background:'var(--card)', border:'0.5px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:'var(--muted)', fontFamily:'DM Mono,monospace', flexShrink:0 }}>{f?.code||key.slice(0,2)}</div>
@@ -664,43 +771,35 @@ export default function FlightTracker() {
                   </div>
                 )
               })}
-              {!Object.keys(history).length && <div style={{ textAlign:'center', padding:'3rem', color:'var(--hint)', fontSize:13 }}>No history yet — start tracking to record price changes</div>}
+              {!Object.keys(history).length && <div style={{ textAlign:'center', padding:'3rem', color:'var(--hint)', fontSize:13 }}>No history yet — start tracking to record changes</div>}
             </>
           )}
 
-          {/* ── Alerts Tab ── */}
+          {/* Alerts tab */}
           {activeTab==='alerts' && (
             <>
-              {/* Add alert */}
               <div style={{ ...card, padding:'1rem 1.25rem', marginBottom:14 }}>
                 <div style={{ fontSize:13, fontWeight:700, marginBottom:12 }}>Add price threshold alert</div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr auto', gap:8, alignItems:'end' }}>
-                  <Field label="Airline (or leave blank for any)">
+                  <Field label="Airline (blank = any)">
                     <input value={newAlertAirline} onChange={e=>setNewAlertAirline(e.target.value)} placeholder="e.g. Qatar Airways" style={inputStyle} />
                   </Field>
-                  <Field label="Alert when price drops below (CA$)">
-                    <input type="number" value={newAlertThresh} onChange={e=>setNewAlertThresh(e.target.value)} placeholder="e.g. 1500" min={0} style={inputStyle} />
+                  <Field label="Alert when price below (CA$)">
+                    <input type="number" value={newAlertThresh} onChange={e=>setNewAlertThresh(e.target.value)} placeholder="e.g. 1500" style={inputStyle} />
                   </Field>
                   <button onClick={addAlert} style={{ ...primaryBtn, height:34, padding:'0 16px', fontSize:13 }}>+ Add</button>
                 </div>
                 <div style={{ fontSize:11, color:'var(--muted)', marginTop:8, lineHeight:1.5 }}>
-                  When any tracked flight hits this price, you'll get a browser notification{alertEmail ? ` and email to ${alertEmail}` : ' (set email in Notifications tab for email alerts)'}.
+                  Fires browser notification{alertEmail ? ` + email to ${alertEmail}` : ' (set email in Notifications tab for email alerts)'}.
                 </div>
               </div>
-
-              {alerts.length===0
-                ? <div style={{ textAlign:'center', padding:'3rem', color:'var(--hint)' }}>
-                    <div style={{ fontSize:36, marginBottom:10 }}>🔔</div>
-                    <div>No alerts set — add a price threshold above</div>
-                  </div>
+              {alerts.length === 0
+                ? <div style={{ textAlign:'center', padding:'3rem', color:'var(--hint)' }}><div style={{ fontSize:36, marginBottom:10 }}>🔔</div><div>No alerts — add a threshold above</div></div>
                 : alerts.map(a => (
                     <div key={a.id} style={{ ...card, padding:'12px 16px', marginBottom:8, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                       <div>
                         <div style={{ fontSize:14, fontWeight:700 }}>{a.airline==='any'?'Any airline':a.airline}</div>
-                        <div style={{ fontSize:12, color:'var(--muted)', marginTop:3 }}>
-                          Alert when ≤ <span style={{ color:'var(--green)', fontWeight:700 }}>CA${a.threshold.toLocaleString()}</span>
-                          <span style={{ marginLeft:8, color:'var(--hint)' }}>{a.route} · {a.date}</span>
-                        </div>
+                        <div style={{ fontSize:12, color:'var(--muted)', marginTop:3 }}>Alert when ≤ <span style={{ color:'var(--green)', fontWeight:700 }}>CA${a.threshold.toLocaleString()}</span><span style={{ marginLeft:8, color:'var(--hint)' }}>{a.route} · {a.date}</span></div>
                       </div>
                       <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                         <Badge color="green">Active</Badge>
@@ -712,61 +811,34 @@ export default function FlightTracker() {
             </>
           )}
 
-          {/* ── Notifications Tab ── */}
+          {/* Notifications tab */}
           {activeTab==='notifications' && (
             <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-
-              {/* Browser notifications */}
               <div style={{ ...card, padding:'1rem 1.25rem' }}>
                 <div style={{ fontSize:13, fontWeight:700, marginBottom:4 }}>Browser notifications</div>
                 <div style={{ fontSize:12, color:'var(--muted)', marginBottom:12, lineHeight:1.6 }}>
-                  Get instant pop-up alerts when a flight hits your price threshold — works on desktop and Android Chrome.
-                  Current status: <span style={{ color:notifPerm==='granted'?'var(--green)':notifPerm==='denied'?'var(--red)':'var(--amber)', fontWeight:700 }}>{notifPerm}</span>
+                  Instant pop-up when a flight hits your price target. Status: <span style={{ color:notifPerm==='granted'?'var(--green)':notifPerm==='denied'?'var(--red)':'var(--amber)', fontWeight:700 }}>{notifPerm}</span>
                 </div>
-                {notifPerm!=='granted'
+                {notifPerm !== 'granted'
                   ? <button onClick={enableNotifications} style={{ ...primaryBtn, height:34, padding:'0 18px', fontSize:13 }}>Enable browser notifications</button>
                   : <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-                      <Badge color="green">✓ Notifications enabled</Badge>
-                      <button onClick={()=>sendBrowserNotification('✈ Test','FlightTrack notifications are working!')} style={{ ...ghostBtn, height:30, padding:'0 12px', fontSize:11 }}>Send test</button>
+                      <Badge color="green">✓ Enabled</Badge>
+                      <button onClick={()=>sendBrowserNotification('✈ Test','FlightTrack alerts are working!')} style={{ ...ghostBtn, height:30, padding:'0 12px', fontSize:11 }}>Send test</button>
                     </div>
                 }
               </div>
-
-              {/* Email notifications */}
               <div style={{ ...card, padding:'1rem 1.25rem' }}>
                 <div style={{ fontSize:13, fontWeight:700, marginBottom:4 }}>Email notifications</div>
                 <div style={{ fontSize:12, color:'var(--muted)', marginBottom:12, lineHeight:1.6 }}>
-                  Receive an email when a price alert fires. Requires <strong style={{ color:'var(--text)' }}>RESEND_API_KEY</strong> in Vercel environment variables.
-                  Sign up free at <a href="https://resend.com" target="_blank" rel="noopener" style={{ color:'var(--accent)' }}>resend.com</a> (100 emails/day free, no credit card).
+                  Requires <strong style={{ color:'var(--text)' }}>RESEND_API_KEY</strong> in Vercel env vars. Free at <a href="https://resend.com" target="_blank" rel="noopener" style={{ color:'var(--accent)' }}>resend.com</a>.
                 </div>
-                <div style={{ display:'flex', gap:8, alignItems:'end' }}>
-                  <Field label="Your email address" style={{ flex:1, margin:0 }}>
-                    <input type="email" value={alertEmail} onChange={e=>{setAlertEmail(e.target.value);ls.set('ft_email',e.target.value)}} placeholder="you@example.com" style={{ ...inputStyle, width:260 }} />
-                  </Field>
+                <div style={{ display:'flex', gap:8 }}>
+                  <input type="email" value={alertEmail} onChange={e=>{setAlertEmail(e.target.value);ls.set('ft_email',e.target.value)}} placeholder="you@example.com" style={{ ...inputStyle, flex:1 }} />
                   <button onClick={()=>addLog('ok','Email saved: '+alertEmail)} style={{ ...primaryBtn, height:34, padding:'0 14px', fontSize:12 }}>Save</button>
                 </div>
               </div>
-
-              {/* Resend setup guide */}
-              <div style={{ ...card, padding:'1rem 1.25rem', background:'rgba(59,130,246,.05)', border:'0.5px solid rgba(59,130,246,.2)' }}>
-                <div style={{ fontSize:13, fontWeight:700, color:'var(--blue)', marginBottom:10 }}>Email setup guide (Resend)</div>
-                {[
-                  ['1','Go to resend.com → Create free account'],
-                  ['2','Click API Keys → Create API Key → copy it'],
-                  ['3','In Vercel: Settings → Environment Variables'],
-                  ['4','Add RESEND_API_KEY = your key'],
-                  ['5','Optionally add ALERT_FROM_EMAIL = alerts@yourdomain.com'],
-                  ['6','Redeploy — email alerts will fire automatically'],
-                ].map(([n,s]) => (
-                  <div key={n} style={{ display:'flex', gap:10, marginBottom:6, fontSize:12 }}>
-                    <span style={{ width:20, height:20, borderRadius:'50%', background:'var(--blue-dim)', color:'var(--blue)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, flexShrink:0 }}>{n}</span>
-                    <span style={{ color:'var(--muted)', lineHeight:1.5 }}>{s}</span>
-                  </div>
-                ))}
-              </div>
             </div>
           )}
-
         </main>
       </div>
     </div>
