@@ -487,64 +487,22 @@ export default function FlightTracker() {
     else addLog('warn', 'Notification permission denied')
   }
 
-  // Build the best booking URL — specific to source and airline
+  // Routes through /api/book which:
+  // - For Duffel: creates a proper Duffel Links session server-side then redirects
+  // - For others: builds best airline booking deep link with route pre-filled
   function getBookUrl(f) {
-    const o  = origin.toUpperCase()
-    const d  = destination.toUpperCase()
-    const dt = depDate
-
-    // ── Duffel: direct offer booking page ────────────────────────────────
-    // book.duffel.com/offers/{id} opens the exact offer ready to book
-    if (f.source === 'duffel' && f.offerId) {
-      return `https://book.duffel.com/offers/${f.offerId}`
-    }
-
-    // ── SerpAPI: use booking token for exact Google Flights deep link ────
-    // This preserves the price and opens the exact itinerary
-    if (f.bookingToken) {
-      return `https://www.google.com/travel/flights?tfs=${f.bookingToken}&curr=CAD&hl=en`
-    }
-
-    // ── Airline name matching with route pre-filled ───────────────────────
-    const name = (f.airline || '').toLowerCase()
-
-    if (name.includes('qatar'))
-      return `https://www.qatarairways.com/en-ca/flights/find-flights.html?bookingClass=E&tripType=O&from=${o}&to=${d}&departing=${dt}&adults=1`
-    if (name.includes('emirates'))
-      return `https://www.emirates.com/ca/english/book/flights/#/searchFlights?from=${o}&to=${d}&departureDate=${dt}&adults=1&cabinClass=economy&tripType=oneway`
-    if (name.includes('etihad'))
-      return `https://www.etihad.com/en-ca/book/flights?tripType=OneWay&from=${o}&to=${d}&departureDate=${dt}&adults=1&cabin=economy`
-    if (name.includes('air india'))
-      return `https://www.airindia.com/book-flights.htm?origin=${o}&destination=${d}&departDate=${dt}&adults=1&class=E&tripType=O`
-    if (name.includes('singapore'))
-      return `https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form?tripType=O&departureCity=${o}&arrivalCity=${d}&departureDate=${dt}&adults=1&cabinClass=Y`
-    if (name.includes('lufthansa'))
-      return `https://www.lufthansa.com/ca/en/flight-search?origin=${o}&destination=${d}&outboundDate=${dt}&adults=1&cabinClass=economy&tripType=ONE_WAY`
-    if (name.includes('british airways'))
-      return `https://www.britishairways.com/travel/book/public/en_ca?from=${o}&to=${d}&depart=${dt}&class=M&adult=1`
-    if (name.includes('air canada'))
-      return `https://www.aircanada.com/ca/en/aco/home.html#/search?org0=${o}&dest0=${d}&departDate0=${dt}&ADT=1&lang=en-CA&tripType=O&cabin=lowest`
-    if (name.includes('klm'))
-      return `https://www.klm.com/travel/ca_en/apps/ebt/ebt_home.htm?lang=en&selectedJourney=ONE_WAY&origin=${o}&destination=${d}&outboundDate=${dt}&adults=1`
-    if (name.includes('air france'))
-      return `https://www.airfrance.ca/en/flight-search?pax=1:0:0:0:0:0:0:0&cabin=EC&tripType=ONE_WAY&segments=0::${o}:${d}:${dt}`
-    if (name.includes('turkish'))
-      return `https://www.turkishairlines.com/en-ca/flights/?fromPort=${o}&toPort=${d}&tripType=O&departure=${dt}&adult=1&cabin=Economy`
-    if (name.includes('cathay'))
-      return `https://www.cathaypacific.com/cx/en_CA/book-a-trip/flights/overview.html?origin=${o}&destination=${d}&departureDate=${dt}&tripType=oneWay&adults=1`
-    if (name.includes('oman'))
-      return `https://www.omanair.com/en/book/flights?type=OW&from=${o}&to=${d}&date=${dt}&adults=1`
-    if (name.includes('gulf air'))
-      return `https://www.gulfair.com/book/flights?tripType=O&orig=${o}&dest=${d}&depDate=${dt}&adults=1`
-    if (name.includes('indigo') || name.includes('6e'))
-      return `https://www.goindigo.in/?from=${o}&to=${d}&date=${dt}&adults=1&tripType=O`
-    if (name.includes('flydubai'))
-      return `https://www.flydubai.com/en/book/search-flights?from=${o}&to=${d}&date=${dt}&adults=1&tripType=OW`
-    if (name.includes('spicejet'))
-      return `https://www.spicejet.com/?src=${o}&dst=${d}&dd=${dt}&ad=1&tripType=O`
-
-    // ── Final fallback: Google Flights with route + date ─────────────────
-    return `https://www.google.com/travel/flights/search?q=flights+from+${o}+to+${d}+on+${dt}&curr=CAD&hl=en&gl=ca`
+    const params = new URLSearchParams({
+      source:       f.source      || '',
+      offerId:      f.offerId     || '',
+      airline:      f.airline     || '',
+      code:         f.code        || '',
+      origin:       origin.toUpperCase(),
+      destination:  destination.toUpperCase(),
+      date:         depDate,
+      flightNumber: f.flightNumber || '',
+      cabin,
+    })
+    return `/api/book?${params.toString()}`
   }
 
   const sorted = useMemo(() => {
@@ -851,7 +809,7 @@ export default function FlightTracker() {
                               )}
                               <a href={getBookUrl(f)} target="_blank" rel="noopener"
                                 style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit', display:'flex', alignItems:'center', gap:4 }}>
-                                {f.source === 'duffel' ? '🎫 Book on Duffel' : f.bookingToken ? '🔍 Book on Google' : '✈ Book Now'}
+                                {f.source === 'duffel' ? '🎫 Book via Duffel' : '✈ Book Now'}
                               </a>
                             </div>
                           </div>
