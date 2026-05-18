@@ -173,7 +173,11 @@ export class DuffelClient {
           refundable:    offer.conditions?.refund_before_departure?.allowed ?? false,
           changeable:    offer.conditions?.change_before_departure?.allowed ?? false,
           rating:        airlineRating(code),
-          bookUrl:       'https://duffel.com',
+          // Duffel Links — deep link directly to this specific offer's booking page
+          // Format: https://book.duffel.com/offers/{offer_id}
+          bookUrl:       `https://book.duffel.com/offers/${offer.id}`,
+          offerId:       offer.id,
+          expiresAt:     offer.expires_at,
           source:        'duffel',
         })
       } catch (e) {

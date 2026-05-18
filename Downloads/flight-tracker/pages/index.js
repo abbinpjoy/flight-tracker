@@ -487,37 +487,64 @@ export default function FlightTracker() {
     else addLog('warn', 'Notification permission denied')
   }
 
-  // Build the best booking URL for each flight
+  // Build the best booking URL — specific to source and airline
   function getBookUrl(f) {
-    // If SerpAPI returned a real Google Flights deep link (long URL), use it
-    if (f.bookUrl && f.bookUrl.includes('google.com/travel/flights') && f.bookUrl.length > 80) return f.bookUrl
+    const o  = origin.toUpperCase()
+    const d  = destination.toUpperCase()
+    const dt = depDate
 
-    // Airline direct booking pages
-    const AIRLINE_URLS = {
-      QR:`https://www.qatarairways.com/en-ca/flights/find-flights.html?bookingClass=E&tripType=O&from=${origin}&to=${destination}&departing=${depDate}&adults=1`,
-      EK:`https://www.emirates.com/english/book/flight-search/?bookingFlow=F&depPort=${origin}&arrPort=${destination}&depDate=${depDate}&cabinClass=E&numAdults=1`,
-      EY:`https://www.etihad.com/en-ca/book/flights?from=${origin}&to=${destination}&departDate=${depDate}&adt=1&type=O`,
-      SQ:`https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form`,
-      AI:`https://www.airindia.com/book-flights.htm`,
-      AC:`https://www.aircanada.com/ca/en/aco/home.html#/search`,
-      LH:`https://www.lufthansa.com/us/en/flight-search?origin=${origin}&destination=${destination}&outboundDate=${depDate}`,
-      BA:`https://www.britishairways.com/travel/flight-search/execclub/_gf/en_gb`,
-      KL:`https://www.klm.com/search/en/?origin=${origin}&destination=${destination}&outbound=${depDate}&cabin=Y&adults=1&tripType=O`,
-      AF:`https://wwws.airfrance.ca/search/offers?pax=1:0:0:0:0:0:0:0&cabin=EC&tripType=ONE_WAY&code=OW&segments=0::${origin}:${destination}:${depDate}`,
-      TK:`https://www.turkishairlines.com/en-ca/flights/?fromPort=${origin}&toPort=${destination}&tripType=O&departure=${depDate}`,
-      CX:`https://www.cathaypacific.com/cx/en_CA/book-a-trip/flights/overview.html`,
-      NH:`https://www.ana.co.jp/en/ca/book/`,
-      JL:`https://www.jal.com/en/booking/`,
-      WY:`https://www.omanair.com/en/book/flights`,
-      GF:`https://www.gulfair.com/book/flights`,
-      '6E':`https://www.goindigo.in/`,
-      SG:`https://www.spicejet.com/`,
-      FZ:`https://www.flydubai.com/en/book/search-flights`,
+    // ── Duffel: direct offer booking page ────────────────────────────────
+    // book.duffel.com/offers/{id} opens the exact offer ready to book
+    if (f.source === 'duffel' && f.offerId) {
+      return `https://book.duffel.com/offers/${f.offerId}`
     }
-    if (f.code && AIRLINE_URLS[f.code]) return AIRLINE_URLS[f.code]
 
-    // Final fallback: Google Flights search for this specific route
-    return `https://www.google.com/travel/flights/search?q=flights+${origin}+to+${destination}&tfs=CBwQAhooEgoyMDI2LTEyLTE0&curr=CAD&hl=en`
+    // ── SerpAPI: use booking token for exact Google Flights deep link ────
+    // This preserves the price and opens the exact itinerary
+    if (f.bookingToken) {
+      return `https://www.google.com/travel/flights?tfs=${f.bookingToken}&curr=CAD&hl=en`
+    }
+
+    // ── Airline name matching with route pre-filled ───────────────────────
+    const name = (f.airline || '').toLowerCase()
+
+    if (name.includes('qatar'))
+      return `https://www.qatarairways.com/en-ca/flights/find-flights.html?bookingClass=E&tripType=O&from=${o}&to=${d}&departing=${dt}&adults=1`
+    if (name.includes('emirates'))
+      return `https://www.emirates.com/ca/english/book/flights/#/searchFlights?from=${o}&to=${d}&departureDate=${dt}&adults=1&cabinClass=economy&tripType=oneway`
+    if (name.includes('etihad'))
+      return `https://www.etihad.com/en-ca/book/flights?tripType=OneWay&from=${o}&to=${d}&departureDate=${dt}&adults=1&cabin=economy`
+    if (name.includes('air india'))
+      return `https://www.airindia.com/book-flights.htm?origin=${o}&destination=${d}&departDate=${dt}&adults=1&class=E&tripType=O`
+    if (name.includes('singapore'))
+      return `https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form?tripType=O&departureCity=${o}&arrivalCity=${d}&departureDate=${dt}&adults=1&cabinClass=Y`
+    if (name.includes('lufthansa'))
+      return `https://www.lufthansa.com/ca/en/flight-search?origin=${o}&destination=${d}&outboundDate=${dt}&adults=1&cabinClass=economy&tripType=ONE_WAY`
+    if (name.includes('british airways'))
+      return `https://www.britishairways.com/travel/book/public/en_ca?from=${o}&to=${d}&depart=${dt}&class=M&adult=1`
+    if (name.includes('air canada'))
+      return `https://www.aircanada.com/ca/en/aco/home.html#/search?org0=${o}&dest0=${d}&departDate0=${dt}&ADT=1&lang=en-CA&tripType=O&cabin=lowest`
+    if (name.includes('klm'))
+      return `https://www.klm.com/travel/ca_en/apps/ebt/ebt_home.htm?lang=en&selectedJourney=ONE_WAY&origin=${o}&destination=${d}&outboundDate=${dt}&adults=1`
+    if (name.includes('air france'))
+      return `https://www.airfrance.ca/en/flight-search?pax=1:0:0:0:0:0:0:0&cabin=EC&tripType=ONE_WAY&segments=0::${o}:${d}:${dt}`
+    if (name.includes('turkish'))
+      return `https://www.turkishairlines.com/en-ca/flights/?fromPort=${o}&toPort=${d}&tripType=O&departure=${dt}&adult=1&cabin=Economy`
+    if (name.includes('cathay'))
+      return `https://www.cathaypacific.com/cx/en_CA/book-a-trip/flights/overview.html?origin=${o}&destination=${d}&departureDate=${dt}&tripType=oneWay&adults=1`
+    if (name.includes('oman'))
+      return `https://www.omanair.com/en/book/flights?type=OW&from=${o}&to=${d}&date=${dt}&adults=1`
+    if (name.includes('gulf air'))
+      return `https://www.gulfair.com/book/flights?tripType=O&orig=${o}&dest=${d}&depDate=${dt}&adults=1`
+    if (name.includes('indigo') || name.includes('6e'))
+      return `https://www.goindigo.in/?from=${o}&to=${d}&date=${dt}&adults=1&tripType=O`
+    if (name.includes('flydubai'))
+      return `https://www.flydubai.com/en/book/search-flights?from=${o}&to=${d}&date=${dt}&adults=1&tripType=OW`
+    if (name.includes('spicejet'))
+      return `https://www.spicejet.com/?src=${o}&dst=${d}&dd=${dt}&ad=1&tripType=O`
+
+    // ── Final fallback: Google Flights with route + date ─────────────────
+    return `https://www.google.com/travel/flights/search?q=flights+from+${o}+to+${d}+on+${dt}&curr=CAD&hl=en&gl=ca`
   }
 
   const sorted = useMemo(() => {
@@ -815,8 +842,17 @@ export default function FlightTracker() {
                             <div style={{ fontSize:21, fontWeight:800, letterSpacing:'-.03em' }}>CA${f.price.toLocaleString()}</div>
                             <PriceDelta cur={f.price} prev={prev} />
                             <div style={{ fontSize:10, color:'var(--muted)', marginTop:2 }}>per person · {cabin}</div>
-                            <div style={{ display:'flex', gap:5, justifyContent:'flex-end', marginTop:6 }}>
-                              <a href={getBookUrl(f)} target="_blank" rel="noopener" style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit' }}>Book →</a>
+                            <div style={{ display:'flex', gap:5, justifyContent:'flex-end', marginTop:6, flexWrap:'wrap', alignItems:'center' }}>
+                              {/* Expiry warning for Duffel offers */}
+                              {f.source === 'duffel' && f.expiresAt && (
+                                <div style={{ fontSize:9, color:'var(--amber)', fontFamily:'DM Mono,monospace', textAlign:'right', width:'100%', marginBottom:2 }}>
+                                  ⏳ offer expires {new Date(f.expiresAt).toLocaleTimeString('en-GB',{hour12:false,hour:'2-digit',minute:'2-digit'})}
+                                </div>
+                              )}
+                              <a href={getBookUrl(f)} target="_blank" rel="noopener"
+                                style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit', display:'flex', alignItems:'center', gap:4 }}>
+                                {f.source === 'duffel' ? '🎫 Book on Duffel' : f.bookingToken ? '🔍 Book on Google' : '✈ Book Now'}
+                              </a>
                             </div>
                           </div>
                         </div>
