@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { requestNotificationPermission, sendBrowserNotification, sendEmailAlert } from '../lib/notify.js'
 
@@ -384,7 +384,7 @@ export default function FlightTracker() {
       })
       const result = await res.json()
       if (!res.ok || result.error) throw new Error(result.error || `HTTP ${res.status}`)
-      const newFlights = applySort(result.flights || [], sortRef.current)
+      const newFlights = (result.flights || []).sort((a, b) => (a.price || 0) - (b.price || 0))
 
       // Log each API source result individually
       if (result.sourceStats?.length) {
@@ -479,20 +479,6 @@ export default function FlightTracker() {
     else addLog('warn', 'Notification permission denied')
   }
 
-  const sortRef = useRef('price')
-  useEffect(() => { sortRef.current = sortBy }, [sortBy])
-
-  const applySort = useCallback((arr, by) => {
-    return [...arr].sort((a, b) => {
-      if (by === 'price')    return (a.price||0) - (b.price||0)
-      if (by === 'duration') return (a.durationMins||0) - (b.durationMins||0)
-      if (by === 'stops')    return (a.stops||0) - (b.stops||0)
-      if (by === 'layover')  return (a.minLayoverMins||999) - (b.minLayoverMins||999)
-      if (by === 'rating')   return (b.rating||0) - (a.rating||0)
-      return (a.price||0) - (b.price||0)
-    })
-  }, [])
-
   // Build the best booking URL for each flight
   function getBookUrl(f) {
     // If SerpAPI returned a real Google Flights deep link, use it
@@ -533,7 +519,16 @@ export default function FlightTracker() {
     return `https://www.google.com/travel/flights/search?tfs=CBwQAhoqagwIAxIIL2cvMTJrd3QSCjIwMjYtMTItMTRyDAgDEggvZy8xMmtkeXABAWoA&curr=CAD`
   }
 
-  const sorted = applySort(flights, sortBy)
+  const sorted = useMemo(() => {
+    return [...flights].sort((a, b) => {
+      if (sortBy === 'price')    return (a.price||0) - (b.price||0)
+      if (sortBy === 'duration') return (a.durationMins||0) - (b.durationMins||0)
+      if (sortBy === 'stops')    return (a.stops||0) - (b.stops||0)
+      if (sortBy === 'layover')  return (a.minLayoverMins||999) - (b.minLayoverMins||999)
+      if (sortBy === 'rating')   return (b.rating||0) - (a.rating||0)
+      return (a.price||0) - (b.price||0)
+    })
+  }, [flights, sortBy])
 
   const cheapest = flights.length ? Math.min(...flights.map(f => f.price)) : null
   const average  = flights.length ? Math.round(flights.reduce((s,f) => s+f.price,0) / flights.length) : null

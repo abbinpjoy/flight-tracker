@@ -38,7 +38,8 @@ export async function orchestrateSearch({
   const hasSerpAPI = !!(process.env.SERPAPI_KEY?.length > 10)
   const hasKiwi    = !!(process.env.KIWI_API_KEY?.length > 5)
   const hasDuffel  = !!(process.env.DUFFEL_ACCESS_TOKEN?.length > 10)
-  const hasAgent   = !!apiKey
+  // Only use Agent if NO other APIs are configured — saves tokens and avoids rate limits
+  const hasAgent   = !!apiKey && !hasSerpAPI && !hasKiwi && !hasDuffel
 
   log(`Starting — SerpAPI:${hasSerpAPI} Kiwi:${hasKiwi} Duffel:${hasDuffel} Agent:${hasAgent}`)
 
