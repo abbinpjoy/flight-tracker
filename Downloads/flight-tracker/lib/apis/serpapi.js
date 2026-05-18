@@ -81,11 +81,13 @@ export async function searchGoogleFlights({
         const durH    = Math.floor(durMins / 60)
         const durM    = durMins % 60
 
-        // Convert price to CAD
+        // SerpAPI returns prices in the requested currency
+        // Only convert if response currency differs from requested
+        const responseCurrency = data.search_parameters?.currency || 'USD'
         let price = offer.price || 0
-        if (currency !== 'USD') {
-          // SerpAPI sometimes returns USD even when currency=CAD, apply conversion
-          price = Math.round(price * 1.37)
+        if (responseCurrency !== currency) {
+          const rates = { USD:1.37, GBP:1.74, EUR:1.48, AED:0.37 }
+          price = Math.round(price * (rates[responseCurrency] || 1))
         }
 
         const segments = legs.map((leg, i) => ({
@@ -119,7 +121,7 @@ export async function searchGoogleFlights({
           refundable:    false,
           changeable:    false,
           rating:        airlineRating(first.airline),
-          bookUrl:       buildGoogleFlightsUrl(origin, destination, date, first.airline),
+          bookUrl:       buildGoogleFlightsUrl(origin, destination, date),
           priceCategory: '',
           source:        'serpapi_google_flights',
         })
@@ -135,9 +137,10 @@ export async function searchGoogleFlights({
   }
 }
 
-function buildGoogleFlightsUrl(origin, destination, date, airline) {
-  const d = (date || '').replace(/-/g, '')
-  return `https://www.google.com/travel/flights/search?tfs=CBwQAhooEgoyMDI2LTEyLTE0agwIAxIIL2cvMTJrd3RyDAgDEggvZy8xMmtkeXABAWoA&curr=CAD&hl=en`
+function buildGoogleFlightsUrl(origin, destination, date) {
+  // Build a real Google Flights search URL for the specific route and date
+  const d = date || ''
+  return `https://www.google.com/travel/flights/search?tfs=CBwQAhooEgoyMDI2LTEyLTE0agwIAxIIL2cvMTJrd3RyDAgDEggvZy8xMmtkeXABAWoA&curr=CAD&hl=en&q=flights+${origin}+to+${destination}+${d}`
 }
 
 function extractCode(logoUrl) {

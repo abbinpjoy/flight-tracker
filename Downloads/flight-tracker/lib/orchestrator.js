@@ -117,12 +117,14 @@ export async function orchestrateSearch({
   })
   log(`Layover filter: ${allFlights.length} → ${layoverValid.length}`)
 
-  // ── Deduplicate: same airline + same departure + similar price ────────
+  // ── Deduplicate: same airline + same departure time + same stops ──────
+  // Use CA$10 price bucket (tight) to avoid merging different options
   const seen    = new Map()
   const deduped = []
   for (const f of layoverValid) {
-    const pBucket = Math.round((f.price || 0) / 30) * 30
-    const key     = `${f.code || f.airline}-${f.departure}-${f.stops}-${pBucket}`
+    const pBucket = Math.round((f.price || 0) / 10) * 10
+    const airlineKey = (f.airline || f.code || '').toLowerCase().replace(/\s+/g,'').slice(0, 8)
+    const key = `${airlineKey}-${f.departure}-${f.stops}-${pBucket}`
     if (!seen.has(key)) {
       seen.set(key, true)
       deduped.push(f)

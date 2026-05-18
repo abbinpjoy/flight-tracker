@@ -401,15 +401,19 @@ export default function FlightTracker() {
 
       setFlights(prev => {
         const prevMap = {}
-        prev.forEach(f => { prevMap[f.id || f.code] = f.price })
+        prev.forEach(f => {
+          const k = `${(f.airline||'').slice(0,12).replace(/\s/g,'')}-${f.stops}-${f.via||'direct'}`
+          prevMap[k] = f.price
+        })
         setPrevPrices(prevMap)
         const flashes = {}
         newFlights.forEach(f => {
-          const key = f.id || f.code
-          if (prevMap[key] !== undefined) {
-            if (f.price < prevMap[key]) flashes[key] = 'g'
-            else if (f.price > prevMap[key]) flashes[key] = 'r'
+          const k = `${(f.airline||'').slice(0,12).replace(/\s/g,'')}-${f.stops}-${f.via||'direct'}`
+          if (prevMap[k] !== undefined) {
+            if (f.price < prevMap[k]) flashes[k] = 'g'
+            else if (f.price > prevMap[k]) flashes[k] = 'r'
           }
+          f._stableKey = k  // attach for flash lookup
         })
         if (Object.keys(flashes).length) { setFlashMap(flashes); setTimeout(() => setFlashMap({}), 800) }
         const currentAlerts = ls.get('ft_alerts', [])
@@ -429,7 +433,11 @@ export default function FlightTracker() {
       setHistory(prev => {
         const now = Date.now()
         const upd = { ...prev }
-        newFlights.forEach(f => { const key = f.id || f.code; upd[key] = [...(upd[key]||[]).slice(-29), { t: now, p: f.price, airline: f.airline }] })
+        newFlights.forEach(f => {
+          // Use stable key: airline+stops+via (not Duffel UUID which changes every tick)
+          const stableKey = `${(f.airline||'').slice(0,12).replace(/\s/g,'')}-${f.stops}-${f.via||'direct'}`
+          upd[stableKey] = [...(upd[stableKey]||[]).slice(-29), { t: now, p: f.price, airline: f.airline }]
+        })
         ls.set('ft_history', upd)
         return upd
       })
@@ -481,42 +489,35 @@ export default function FlightTracker() {
 
   // Build the best booking URL for each flight
   function getBookUrl(f) {
-    // If SerpAPI returned a real Google Flights deep link, use it
-    if (f.bookUrl && f.bookUrl.includes('google.com/travel/flights') && f.bookUrl.length > 60) return f.bookUrl
-    // If it's a real airline direct URL (not a generic homepage), use it
-    if (f.bookUrl && !['https://duffel.com','https://www.google.com/travel/flights'].includes(f.bookUrl)) return f.bookUrl
+    // If SerpAPI returned a real Google Flights deep link (long URL), use it
+    if (f.bookUrl && f.bookUrl.includes('google.com/travel/flights') && f.bookUrl.length > 80) return f.bookUrl
 
-    // Build Google Flights deep link for the route (best fallback — always works)
-    const dep = depDate.replace(/-/g, '')
-    const gf  = `https://www.google.com/travel/flights/search?tfs=CBwQAhooagwIAxIIL2cvMTJrd3QSCjIwMjYtMTItMTRyDAgDEggvZy8xMmtkeXABAWoA`
-
-    // Airline direct booking pages as better fallback
+    // Airline direct booking pages
     const AIRLINE_URLS = {
-      QR:'https://www.qatarairways.com/en/flights.html',
-      EK:'https://www.emirates.com/english/book/flight-search/',
-      EY:'https://www.etihad.com/en/fly-etihad/search-results',
-      SQ:'https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form',
-      AI:'https://www.airindia.com/book-flights.htm',
-      AC:'https://www.aircanada.com/ca/en/aco/home.html',
-      LH:'https://www.lufthansa.com/us/en/flight-search',
-      BA:'https://www.britishairways.com/travel/flight-search/execclub/_gf/en_gb',
-      KL:'https://www.klm.com/search/en/',
-      AF:'https://www.airfrance.com/us/en/common/guidevoyageur/fly/search-flights.htm',
-      TK:'https://www.turkishairlines.com/en-us/flights/',
-      CX:'https://www.cathaypacific.com/cx/en_US/book-a-trip/flights/overview.html',
-      NH:'https://www.ana.co.jp/en/us/book/book-flight/',
-      JL:'https://www.jal.com/en/booking/',
-      WY:'https://www.omanair.com/en/book/flights',
-      GF:'https://www.gulfair.com/book/flights',
-      '6E':'https://www.goindigo.in/',
-      SG:'https://www.spicejet.com/',
-      FZ:'https://www.flydubai.com/en/book/search-flights',
+      QR:`https://www.qatarairways.com/en-ca/flights/find-flights.html?bookingClass=E&tripType=O&from=${origin}&to=${destination}&departing=${depDate}&adults=1`,
+      EK:`https://www.emirates.com/english/book/flight-search/?bookingFlow=F&depPort=${origin}&arrPort=${destination}&depDate=${depDate}&cabinClass=E&numAdults=1`,
+      EY:`https://www.etihad.com/en-ca/book/flights?from=${origin}&to=${destination}&departDate=${depDate}&adt=1&type=O`,
+      SQ:`https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form`,
+      AI:`https://www.airindia.com/book-flights.htm`,
+      AC:`https://www.aircanada.com/ca/en/aco/home.html#/search`,
+      LH:`https://www.lufthansa.com/us/en/flight-search?origin=${origin}&destination=${destination}&outboundDate=${depDate}`,
+      BA:`https://www.britishairways.com/travel/flight-search/execclub/_gf/en_gb`,
+      KL:`https://www.klm.com/search/en/?origin=${origin}&destination=${destination}&outbound=${depDate}&cabin=Y&adults=1&tripType=O`,
+      AF:`https://wwws.airfrance.ca/search/offers?pax=1:0:0:0:0:0:0:0&cabin=EC&tripType=ONE_WAY&code=OW&segments=0::${origin}:${destination}:${depDate}`,
+      TK:`https://www.turkishairlines.com/en-ca/flights/?fromPort=${origin}&toPort=${destination}&tripType=O&departure=${depDate}`,
+      CX:`https://www.cathaypacific.com/cx/en_CA/book-a-trip/flights/overview.html`,
+      NH:`https://www.ana.co.jp/en/ca/book/`,
+      JL:`https://www.jal.com/en/booking/`,
+      WY:`https://www.omanair.com/en/book/flights`,
+      GF:`https://www.gulfair.com/book/flights`,
+      '6E':`https://www.goindigo.in/`,
+      SG:`https://www.spicejet.com/`,
+      FZ:`https://www.flydubai.com/en/book/search-flights`,
     }
-
     if (f.code && AIRLINE_URLS[f.code]) return AIRLINE_URLS[f.code]
 
-    // Final fallback: Google Flights with route pre-filled
-    return `https://www.google.com/travel/flights/search?tfs=CBwQAhoqagwIAxIIL2cvMTJrd3QSCjIwMjYtMTItMTRyDAgDEggvZy8xMmtkeXABAWoA&curr=CAD`
+    // Final fallback: Google Flights search for this specific route
+    return `https://www.google.com/travel/flights/search?q=flights+${origin}+to+${destination}&tfs=CBwQAhooEgoyMDI2LTEyLTE0&curr=CAD&hl=en`
   }
 
   const sorted = useMemo(() => {
@@ -764,7 +765,7 @@ export default function FlightTracker() {
                     <div style={{ fontSize:13, marginTop:6 }}>Type a city or airport code in From/To fields, then click Start Tracking</div>
                   </div>
                 : sorted.map(f => {
-                    const fkey  = f.id || f.code
+                    const fkey  = f._stableKey || `${(f.airline||'').slice(0,12).replace(/\s/g,'')}-${f.stops}-${f.via||'direct'}`
                     const prev  = prevPrices[fkey]
                     const hist  = history[fkey] || []
                     const flash = flashMap[fkey]
