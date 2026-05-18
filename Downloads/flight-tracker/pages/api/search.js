@@ -1,6 +1,8 @@
 /**
  * /api/search
- * Delegates to orchestrator — runs SerpAPI + Kiwi + Duffel + Agent in parallel.
+ * Delegates to orchestrator — runs SerpAPI + Kiwi + Duffel in parallel.
+ * Claude Agent (ANTHROPIC_API_KEY) is only used as fallback when NO other
+ * flight APIs are configured. If you have SerpAPI + Duffel, you don't need it.
  */
 import { orchestrateSearch } from '../../lib/orchestrator.js'
 
@@ -18,6 +20,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'origin, destination and date are required' })
   }
 
+  const hasSerpAPI = !!(process.env.SERPAPI_KEY?.length > 10)
+  const hasKiwi    = !!(process.env.KIWI_API_KEY?.length > 5)
+  const hasDuffel  = !!(process.env.DUFFEL_ACCESS_TOKEN?.length > 10)
+  const hasOtherAPIs = hasSerpAPI || hasKiwi || hasDuffel
+
+  // Only pass Anthropic key if no flight APIs are configured
+  // This prevents unnecessary token usage and rate limit errors
+  const apiKey = hasOtherAPIs ? null : process.env.ANTHROPIC_API_KEY
+
   try {
     const result = await orchestrateSearch({
       origin:         origin.toUpperCase().trim(),
@@ -29,7 +40,7 @@ export default async function handler(req, res) {
       minLayoverMins: parseInt(minLayoverMins) || 60,
       maxLayoverMins: maxLayoverMins ? parseInt(maxLayoverMins) : null,
       currency,
-      apiKey:         process.env.ANTHROPIC_API_KEY,
+      apiKey,
     })
 
     return res.status(200).json(result)
@@ -39,12 +50,7 @@ export default async function handler(req, res) {
   }
 }
 
-// Extend Vercel function timeout to 30s (Hobby: 10s, Pro: 60s)
-// This ensures all parallel API calls have time to complete
 export const config = {
-  api: {
-    responseLimit:  false,
-    bodyParser:     true,
-  },
+  api: { responseLimit: false, bodyParser: true },
   maxDuration: 30,
 }

@@ -388,11 +388,21 @@ export default function FlightTracker() {
 
       // Log each API source result individually
       if (result.sourceStats?.length) {
+        const activeCount = result.sourceStats.filter(s => s.status === 'ok').length
         result.sourceStats.forEach(s => {
-          if (s.status === 'ok')      addLog('ok',   `${s.name}: ${s.count} flights found`)
-          else if (s.status === 'error')  addLog('warn', `${s.name}: ${s.error || 'error'}`)
-          else if (s.status === 'empty')  addLog('info', `${s.name}: 0 results for this route`)
-          else if (s.status === 'skipped') addLog('info', `${s.name}: no API key configured`)
+          if (s.status === 'ok')
+            addLog('ok',   `${s.name}: ${s.count} flights found`)
+          else if (s.status === 'error')
+            addLog('warn', `${s.name}: ${s.error || 'error'}`)
+          else if (s.status === 'empty')
+            addLog('info', `${s.name}: 0 results for this route`)
+          else if (s.status === 'skipped') {
+            // Agent is intentionally skipped when other APIs are active
+            if (s.name === 'Agent' && activeCount > 0)
+              addLog('info', `Agent: not needed (${activeCount} API${activeCount>1?'s':''} active)`)
+            else
+              addLog('info', `${s.name}: not configured`)
+          }
         })
         addLog('ok', `Merged ${result.totalMerged || newFlights.length} → deduped ${result.afterDedup || newFlights.length} → shown ${newFlights.length} (${result.elapsed}ms)`)
       } else {
