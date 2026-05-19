@@ -307,27 +307,30 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
     const isEmpty = !cell
     const isSelected = isSelectedOut && (retDt ? isSelectedRet : true)
 
-    // Build Google Flights URL directly with all search params pre-filled
-    // This is more reliable than using stored googleUrl which came from a different search
-    function buildGoogleUrl() {
-      // Google Flights deep link format with tfs encoding is not stable,
-      // so we use the query string approach which always works
-      const base = 'https://www.google.com/travel/flights'
-      const pax  = parseInt(passengers) || 1
-      const cabinMap = { economy: '1', premium_economy: '2', business: '3', first: '4' }
-      const cls  = cabinMap[cabin] || '1'
-      // Use SerpAPI's own URL if we have it for the exact date, otherwise build one
-      if (cell?.googleUrl && cell.googleUrl.includes(outDt)) return cell.googleUrl
-      // Construct a Google Flights search URL
-      const q = retDt
-        ? `Flights from ${origin} to ${destination} ${outDt} return ${retDt}`
-        : `Flights from ${origin} to ${destination} ${outDt}`
-      return `${base}?hl=en&gl=ca&curr=CAD&q=${encodeURIComponent(q)}&adults=${pax}&cabin=${cls}`
-    }
-
     function handleClick() {
-      const url = buildGoogleUrl()
-      window.open(url, '_blank')
+      // Build Google Flights URL from scratch using exact cell params only
+      // Never use cell.googleUrl — it may have wrong trip type or dates baked in
+      const pax = parseInt(passengers) || 1
+      const cabinMap = { economy: '1', premium_economy: '2', business: '3', first: '4' }
+      const cls = cabinMap[cabin] || '1'
+
+      // type=2 = one-way, type=1 = round-trip
+      const tripType = retDt ? '1' : '2'
+
+      const params = new URLSearchParams({
+        hl:            'en',
+        gl:            'ca',
+        curr:          'CAD',
+        departure_id:  origin,
+        arrival_id:    destination,
+        outbound_date: outDt,
+        travel_class:  cls,
+        adults:        String(pax),
+        type:          tripType,
+      })
+      if (retDt) params.set('return_date', retDt)
+
+      window.open(`https://www.google.com/travel/flights?${params}`, '_blank')
     }
 
     if (isEmpty) return (
