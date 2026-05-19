@@ -821,7 +821,9 @@ export default function FlightTracker() {
                               )}
                               <a href={getBookUrl(f)} target="_blank" rel="noopener"
                                 style={{ padding:'4px 11px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit', display:'flex', alignItems:'center', gap:4 }}>
-                                {f.source === 'duffel' ? '🎫 Book via Duffel' : '✈ Book Now'}
+                                {f.source === 'serpapi_google_flights'
+                                  ? '🔍 View on Google Flights'
+                                  : `✈ Book on ${f.airline || 'Airline'}`}
                               </a>
                             </div>
                           </div>
