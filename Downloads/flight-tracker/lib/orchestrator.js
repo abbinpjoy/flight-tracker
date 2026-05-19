@@ -20,7 +20,7 @@ const T = {
   kiwi:      12000,
   duffel:    15000,
   travelpayouts: 10000,
-  virtualinterline: 25000, // VI searches many hub pairs in parallel — needs more time
+  virtualinterline: 35000, // 2s delay + up to 3 batches × (15s Duffel + 1.2s pause)
   agent:     22000,
 }
 
@@ -80,7 +80,10 @@ export async function orchestrateSearch({
 
     hasVI
       ? raceTimeout(
-          searchVirtualInterline({ origin, destination, date, cabin, passengers, minLayoverMins, currency }),
+          // Delay VI by 2s so the main Duffel search completes first,
+          // avoiding simultaneous rate-limit collisions
+          new Promise(resolve => setTimeout(resolve, 2000))
+            .then(() => searchVirtualInterline({ origin, destination, date, cabin, passengers, minLayoverMins, currency })),
           T.virtualinterline, 'VirtualInterline')
       : Promise.resolve(null),
 

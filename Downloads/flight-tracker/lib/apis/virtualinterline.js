@@ -20,11 +20,11 @@ function selectHubs(origin, destination) {
   const EAST_ASIA = ['HKG','NRT','ICN','PVG','PEK','TPE']
   const EUROPE = ['LHR','LGW','CDG','FRA','AMS','MAD','FCO','MUC','ZRH','BCN','ARN','CPH']
 
-  if (INDIA.includes(dest))    return ['DOH','DXB','AUH','MCT','SIN','KUL','LHR','CMB']
-  if (SE_ASIA.includes(dest))  return ['DOH','DXB','SIN','KUL','HKG']
-  if (EAST_ASIA.includes(dest)) return ['DOH','SIN','HKG','ICN']
-  if (EUROPE.includes(dest))   return ['LHR','CDG','FRA','AMS','ICN','DOH']
-  return ['DOH','DXB','SIN','LHR']
+  if (INDIA.includes(dest))    return ['DOH','DXB','AUH','SIN','LHR']
+  if (SE_ASIA.includes(dest))  return ['DOH','DXB','SIN','KUL']
+  if (EAST_ASIA.includes(dest)) return ['DOH','SIN','HKG']
+  if (EUROPE.includes(dest))   return ['LHR','CDG','FRA','ICN']
+  return ['DOH','DXB','SIN']
 }
 
 export async function searchVirtualInterline({
@@ -41,37 +41,48 @@ export async function searchVirtualInterline({
   const client = new DuffelClient(token)
   const pax = parseInt(passengers) || 1
 
-  // Search all hub legs in parallel
-  // outbound: origin → hub  |  inbound: hub → destination
-  const searches = []
-  for (const hub of hubs) {
-    searches.push(
-      client.searchOffers({
-        origin, destination: hub,
-        departureDate: date, adults: pax,
-        cabinClass: cabin, currency, minLayoverMins: 0,
-      }).then(r => ({ hub, leg: 'out', offers: (r||[]).filter(o=>o.price>0) }))
-        .catch(e => { console.warn(`[VI] ${origin}→${hub}: ${e.message}`); return { hub, leg:'out', offers:[] } })
-    )
-    searches.push(
-      client.searchOffers({
-        origin: hub, destination,
-        departureDate: date, adults: pax,
-        cabinClass: cabin, currency, minLayoverMins: 0,
-      }).then(r => ({ hub, leg: 'in', offers: (r||[]).filter(o=>o.price>0) }))
-        .catch(e => { console.warn(`[VI] ${hub}→${destination}: ${e.message}`); return { hub, leg:'in', offers:[] } })
-    )
-  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-  const results = await Promise.allSettled(searches)
+  // Batch hub searches to avoid hammering Duffel's rate limit.
+  // Process 2 hubs at a time with a small delay between batches.
+  // Each hub = 2 Duffel calls (out + in), so 2 hubs = 4 concurrent calls max.
+  const BATCH_SIZE  = 2
+  const BATCH_DELAY = 1200 // ms between batches
 
-  // Organise by hub
   const hubMap = {}
-  for (const r of results) {
-    if (r.status !== 'fulfilled') continue
-    const { hub, leg, offers } = r.value
-    if (!hubMap[hub]) hubMap[hub] = { out:[], in:[] }
-    hubMap[hub][leg] = offers
+  for (let i = 0; i < hubs.length; i += BATCH_SIZE) {
+    const batch = hubs.slice(i, i + BATCH_SIZE)
+    const batchSearches = []
+
+    for (const hub of batch) {
+      batchSearches.push(
+        client.searchOffers({
+          origin, destination: hub,
+          departureDate: date, adults: pax,
+          cabinClass: cabin, currency, minLayoverMins: 0,
+        }).then(r => ({ hub, leg: 'out', offers: (r||[]).filter(o=>o.price>0) }))
+          .catch(e => { console.warn(`[VI] ${origin}→${hub}: ${e.message}`); return { hub, leg:'out', offers:[] } })
+      )
+      batchSearches.push(
+        client.searchOffers({
+          origin: hub, destination,
+          departureDate: date, adults: pax,
+          cabinClass: cabin, currency, minLayoverMins: 0,
+        }).then(r => ({ hub, leg: 'in', offers: (r||[]).filter(o=>o.price>0) }))
+          .catch(e => { console.warn(`[VI] ${hub}→${destination}: ${e.message}`); return { hub, leg:'in', offers:[] } })
+      )
+    }
+
+    const batchResults = await Promise.allSettled(batchSearches)
+    for (const r of batchResults) {
+      if (r.status !== 'fulfilled') continue
+      const { hub, leg, offers } = r.value
+      if (!hubMap[hub]) hubMap[hub] = { out:[], in:[] }
+      hubMap[hub][leg] = offers
+    }
+
+    // Delay between batches (skip delay after last batch)
+    if (i + BATCH_SIZE < hubs.length) await sleep(BATCH_DELAY)
   }
 
   // Build combined itineraries — one per hub, cheapest leg each side
