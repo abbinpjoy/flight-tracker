@@ -165,80 +165,139 @@ function SegmentTimeline({ segments }) {
 }
 
 // ── Price Grid Component ──────────────────────────────────────────────────
-function PriceGrid({ origin, destination, baseDate, cabin, passengers }) {
-  const [tripType, setTripType] = useState('oneway') // 'oneway' | 'roundtrip'
-  const [returnDays, setReturnDays] = useState(7)
-  const [gridData, setGridData] = useState(null)  // { dates, airlines, cells }
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+function PriceGrid({ origin, destination, baseDate, retDate: baseRetDate, cabin, passengers }) {
+  const [tripType,   setTripType]   = useState('oneway')
+  const [gridData,   setGridData]   = useState(null)
+  const [loading,    setLoading]    = useState(false)
+  const [error,      setError]      = useState('')
+  const [loadingMsg, setLoadingMsg] = useState('')
 
-  // Generate ±3 days around baseDate
-  const dates = useMemo(() => {
-    if (!baseDate) return []
-    const base = new Date(baseDate)
+  // ±3 days around a base date → 7 dates
+  function surroundingDates(base) {
+    if (!base) return []
+    const b = new Date(base)
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(base); d.setDate(d.getDate() + i - 3)
-      return d.toISOString().slice(0,10)
+      const d = new Date(b); d.setDate(d.getDate() + i - 3)
+      return d.toISOString().slice(0, 10)
     })
-  }, [baseDate])
+  }
+
+  const outDates = useMemo(() => surroundingDates(baseDate), [baseDate])
+
+  // For roundtrip: inbound dates ±3 days around the configured return date
+  // Fall back to baseDate + 7 if no return date set
+  const effectiveRetBase = useMemo(() => {
+    if (baseRetDate) return baseRetDate
+    if (!baseDate) return ''
+    const d = new Date(baseDate); d.setDate(d.getDate() + 7)
+    return d.toISOString().slice(0, 10)
+  }, [baseDate, baseRetDate])
+
+  const inDates = useMemo(() => surroundingDates(effectiveRetBase), [effectiveRetBase])
+
+  function fmtDate(dt) {
+    const d = new Date(dt)
+    return { short: d.toLocaleDateString('en-CA', { month:'short', day:'numeric' }), day: d.toLocaleDateString('en-CA', { weekday:'short' }) }
+  }
+
+  function cellColor(price, minP, maxP) {
+    if (!price) return 'transparent'
+    const ratio = maxP === minP ? 0.5 : (price - minP) / (maxP - minP)
+    if (ratio < 0.2)  return 'rgba(34,197,94,0.28)'
+    if (ratio < 0.4)  return 'rgba(34,197,94,0.14)'
+    if (ratio < 0.65) return 'rgba(245,158,11,0.12)'
+    return 'rgba(239,68,68,0.18)'
+  }
 
   async function fetchGrid() {
     if (!origin || !destination || !baseDate) return
     setLoading(true); setError(''); setGridData(null)
+
     try {
-      // Fetch all 7 dates in parallel
-      const results = await Promise.allSettled(dates.map(date =>
-        fetch('/api/search', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            origin, destination, date,
-            returnDate: tripType === 'roundtrip' ? (() => { const d = new Date(date); d.setDate(d.getDate()+returnDays); return d.toISOString().slice(0,10) })() : '',
-            cabin, passengers: parseInt(passengers)||1,
-            minLayoverMins: 60, currency: 'CAD',
-          }),
-        }).then(r => r.json())
-      ))
+      if (tripType === 'oneway') {
+        // ONE WAY: rows = airlines, cols = outbound dates
+        setLoadingMsg(`Fetching ${outDates.length} dates…`)
+        const results = await Promise.allSettled(outDates.map(date =>
+          fetch('/api/search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ origin, destination, date, returnDate: '', cabin, passengers: parseInt(passengers)||1, minLayoverMins: 60, currency: 'CAD' }),
+          }).then(r => r.json())
+        ))
 
-      // Build grid: rows = airlines, cols = dates
-      const airlineMap = {} // airline name → { code, prices: {date: price} }
-      results.forEach((res, di) => {
-        if (res.status !== 'fulfilled') return
-        const flights = res.value?.flights || []
-        flights.forEach(f => {
-          const key = f.airline || 'Unknown'
-          if (!airlineMap[key]) airlineMap[key] = { code: f.code || '??', prices: {} }
-          const existing = airlineMap[key].prices[dates[di]]
-          if (!existing || f.price < existing) airlineMap[key].prices[dates[di]] = f.price
+        // airlineMap: { airlineName → { code, prices: { date → price } } }
+        const airlineMap = {}
+        results.forEach((res, di) => {
+          if (res.status !== 'fulfilled') return
+          ;(res.value?.flights || []).forEach(f => {
+            const key = f.airline || 'Unknown'
+            if (!airlineMap[key]) airlineMap[key] = { code: f.code || '??', prices: {} }
+            const ex = airlineMap[key].prices[outDates[di]]
+            if (!ex || f.price < ex) airlineMap[key].prices[outDates[di]] = f.price
+          })
         })
-      })
 
-      // Sort airlines by minimum price across dates
-      const airlines = Object.entries(airlineMap)
-        .map(([name, info]) => {
-          const vals = Object.values(info.prices).filter(Boolean)
-          const minPrice = vals.length ? Math.min(...vals) : Infinity
-          return { name, code: info.code, prices: info.prices, minPrice }
+        const rows = Object.entries(airlineMap)
+          .map(([name, info]) => {
+            const vals = Object.values(info.prices).filter(Boolean)
+            return { name, code: info.code, prices: info.prices, minPrice: vals.length ? Math.min(...vals) : Infinity }
+          })
+          .sort((a, b) => a.minPrice - b.minPrice)
+
+        const allPrices = rows.flatMap(r => Object.values(r.prices).filter(Boolean))
+        const minP = Math.min(...allPrices), maxP = Math.max(...allPrices)
+        setGridData({ mode: 'oneway', outDates, rows, minP, maxP })
+
+      } else {
+        // ROUND TRIP: rows = inbound dates (Y), cols = outbound dates (X)
+        // Cell = cheapest price for that out+in combination
+        // Fetch all 7×7 = 49 combinations in parallel
+        const combos = []
+        outDates.forEach(out => inDates.forEach(ret => {
+          if (ret > out) combos.push({ out, ret }) // skip impossible (return before depart)
+        }))
+
+        setLoadingMsg(`Fetching ${combos.length} outbound+return combinations…`)
+
+        const results = await Promise.allSettled(combos.map(({ out, ret }) =>
+          fetch('/api/search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ origin, destination, date: out, returnDate: ret, cabin, passengers: parseInt(passengers)||1, minLayoverMins: 60, currency: 'CAD' }),
+          }).then(r => r.json())
+        ))
+
+        // matrix: { outDate → { inDate → cheapestPrice } }
+        const matrix = {}
+        outDates.forEach(o => { matrix[o] = {} })
+
+        results.forEach((res, i) => {
+          if (res.status !== 'fulfilled') return
+          const { out, ret } = combos[i]
+          const flights = (res.value?.flights || []).filter(f => f.price > 0)
+          if (!flights.length) return
+          const cheapest = Math.min(...flights.map(f => f.price))
+          const existing = matrix[out][ret]
+          if (!existing || cheapest < existing) matrix[out][ret] = cheapest
         })
-        .sort((a,b) => a.minPrice - b.minPrice)
 
-      // Find min/max for color scaling
-      const allPrices = airlines.flatMap(a => Object.values(a.prices).filter(Boolean))
-      const minP = Math.min(...allPrices), maxP = Math.max(...allPrices)
+        // Y-axis rows = inbound dates (only those that have at least 1 price)
+        const activeInDates = inDates.filter(ret => outDates.some(out => matrix[out][ret]))
+        const allPrices = outDates.flatMap(o => Object.values(matrix[o]).filter(Boolean))
+        const minP = allPrices.length ? Math.min(...allPrices) : 0
+        const maxP = allPrices.length ? Math.max(...allPrices) : 0
 
-      setGridData({ dates, airlines, minP, maxP })
+        setGridData({ mode: 'roundtrip', outDates, inDates: activeInDates, matrix, minP, maxP })
+      }
     } catch(e) { setError(e.message) }
     setLoading(false)
   }
 
-  function cellColor(price, minP, maxP) {
-    if (!price) return 'var(--card)'
-    const ratio = maxP===minP ? 0.5 : (price-minP)/(maxP-minP)
-    if (ratio < 0.25) return 'rgba(34,197,94,0.22)'   // cheapest — green
-    if (ratio < 0.5)  return 'rgba(34,197,94,0.10)'   // below avg — light green
-    if (ratio < 0.75) return 'rgba(245,158,11,0.12)'  // above avg — amber
-    return 'rgba(239,68,68,0.15)'                       // most expensive — red
-  }
+  const thStyle = (highlight) => ({
+    padding: '8px 8px', fontSize: 10, fontWeight: 700,
+    borderBottom: '0.5px solid var(--border)',
+    whiteSpace: 'nowrap', textAlign: 'center', minWidth: 85,
+    color: highlight ? 'var(--accent)' : 'var(--muted)',
+    background: highlight ? 'rgba(110,231,183,0.06)' : 'transparent',
+  })
 
   return (
     <div>
@@ -246,20 +305,18 @@ function PriceGrid({ origin, destination, baseDate, cabin, passengers }) {
       <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:14, flexWrap:'wrap' }}>
         <div style={{ display:'flex', borderRadius:7, overflow:'hidden', border:'0.5px solid var(--border-hi)' }}>
           {[['oneway','One Way'],['roundtrip','Round Trip']].map(([v,l]) => (
-            <button key={v} onClick={()=>setTripType(v)}
+            <button key={v} onClick={() => { setTripType(v); setGridData(null) }}
               style={{ padding:'6px 14px', fontSize:12, fontWeight:700, fontFamily:'inherit', border:'none', cursor:'pointer',
-                background:tripType===v?'var(--accent)':'var(--card)', color:tripType===v?'#07080f':'var(--muted)' }}>
+                background: tripType===v ? 'var(--accent)' : 'var(--card)',
+                color: tripType===v ? '#07080f' : 'var(--muted)' }}>
               {l}
             </button>
           ))}
         </div>
-        {tripType==='roundtrip' && (
-          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-            <span style={{ fontSize:11, color:'var(--muted)' }}>Return after</span>
-            <select value={returnDays} onChange={e=>setReturnDays(+e.target.value)}
-              style={{ ...inputStyle, width:80, height:30 }}>
-              {[3,5,7,10,14,21,30].map(d=><option key={d} value={d}>{d}d</option>)}
-            </select>
+        {tripType === 'roundtrip' && (
+          <div style={{ fontSize:11, color:'var(--muted)' }}>
+            Return base: <span style={{ color:'var(--blue)', fontWeight:700 }}>{effectiveRetBase}</span>
+            {!baseRetDate && <span style={{ color:'var(--hint)', marginLeft:4 }}>(set return date in config for a custom base)</span>}
           </div>
         )}
         <button onClick={fetchGrid} disabled={loading}
@@ -269,10 +326,16 @@ function PriceGrid({ origin, destination, baseDate, cabin, passengers }) {
         {error && <span style={{ fontSize:11, color:'var(--red)' }}>{error}</span>}
       </div>
 
+      {/* Axis labels for roundtrip */}
+      {tripType === 'roundtrip' && !loading && !gridData && (
+        <div style={{ fontSize:11, color:'var(--hint)', marginBottom:10 }}>
+          Grid shows: <span style={{ color:'var(--accent)' }}>outbound date</span> across the top (X axis) · <span style={{ color:'var(--blue)' }}>return date</span> down the side (Y axis) · each cell = cheapest round-trip price
+        </div>
+      )}
+
       {/* Legend */}
-      <div style={{ display:'flex', gap:10, marginBottom:10, fontSize:10, color:'var(--muted)', alignItems:'center' }}>
-        <span>Price range:</span>
-        {[['rgba(34,197,94,0.22)','Cheapest'],['rgba(34,197,94,0.10)','Below avg'],['rgba(245,158,11,0.12)','Above avg'],['rgba(239,68,68,0.15)','Highest']].map(([bg,lbl])=>(
+      <div style={{ display:'flex', gap:10, marginBottom:10, fontSize:10, color:'var(--muted)', alignItems:'center', flexWrap:'wrap' }}>
+        {[['rgba(34,197,94,0.28)','Cheapest'],['rgba(34,197,94,0.14)','Low'],['rgba(245,158,11,0.12)','Mid'],['rgba(239,68,68,0.18)','High']].map(([bg,lbl])=>(
           <span key={lbl} style={{ display:'flex', alignItems:'center', gap:4 }}>
             <span style={{ width:12, height:12, borderRadius:3, background:bg, display:'inline-block', border:'0.5px solid var(--border-hi)' }}/>
             {lbl}
@@ -283,79 +346,144 @@ function PriceGrid({ origin, destination, baseDate, cabin, passengers }) {
       {!gridData && !loading && (
         <div style={{ textAlign:'center', padding:'3rem', color:'var(--hint)', fontSize:13 }}>
           <div style={{ fontSize:32, marginBottom:10 }}>📊</div>
-          Click "Load Price Grid" to see prices across ±3 days from your selected date
+          {tripType === 'oneway'
+            ? 'Airlines × outbound dates (±3 days)'
+            : 'Outbound date (X) × Return date (Y) — cheapest price per combination'}
         </div>
       )}
 
       {loading && (
         <div style={{ textAlign:'center', padding:'3rem', color:'var(--muted)', fontSize:13 }}>
           <div className="anim-spin" style={{ fontSize:28, display:'inline-block', marginBottom:10 }}>⟳</div>
-          <div>Fetching 7 dates in parallel…</div>
+          <div>{loadingMsg}</div>
         </div>
       )}
 
-      {gridData && gridData.airlines.length === 0 && (
-        <div style={{ textAlign:'center', padding:'2rem', color:'var(--hint)', fontSize:13 }}>No flights found for this route</div>
+      {gridData && gridData.mode === 'oneway' && gridData.rows.length === 0 && (
+        <div style={{ textAlign:'center', padding:'2rem', color:'var(--hint)', fontSize:13 }}>No flights found</div>
       )}
 
-      {gridData && gridData.airlines.length > 0 && (
+      {/* ONE WAY: airlines × outbound dates */}
+      {gridData?.mode === 'oneway' && gridData.rows.length > 0 && (
         <div style={{ overflowX:'auto' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+          <table style={{ borderCollapse:'collapse', fontSize:12 }}>
             <thead>
               <tr>
                 <th style={{ textAlign:'left', padding:'8px 10px', fontSize:11, color:'var(--muted)', fontWeight:700, borderBottom:'0.5px solid var(--border)', position:'sticky', left:0, background:'var(--surface)', whiteSpace:'nowrap' }}>
                   Airline
                 </th>
-                {gridData.dates.map((dt) => {
-                  const d = new Date(dt)
+                {gridData.outDates.map(dt => {
+                  const { short, day } = fmtDate(dt)
                   const isBase = dt === baseDate
-                  // Compute return date for this column
-                  const retDt = (() => { const rd = new Date(dt); rd.setDate(rd.getDate()+returnDays); return rd })()
                   return (
-                    <th key={dt} style={{ padding:'8px 8px', fontSize:10, color:isBase?'var(--accent)':'var(--muted)', fontWeight:700, borderBottom:'0.5px solid var(--border)', whiteSpace:'nowrap', textAlign:'center', minWidth:90, background:isBase?'rgba(110,231,183,0.06)':'transparent' }}>
-                      {isBase && <div style={{ fontSize:8, color:'var(--accent)', marginBottom:2 }}>★ selected</div>}
-                      <div style={{ fontWeight:800 }}>{d.toLocaleDateString('en-CA',{month:'short',day:'numeric'})}</div>
-                      <div style={{ fontSize:9, color:'var(--hint)' }}>{d.toLocaleDateString('en-CA',{weekday:'short'})}</div>
-                      {tripType === 'roundtrip' && (
-                        <div style={{ marginTop:3, paddingTop:3, borderTop:'0.5px solid var(--border)' }}>
-                          <div style={{ fontSize:9, color:'var(--blue)', fontWeight:700 }}>↩ {retDt.toLocaleDateString('en-CA',{month:'short',day:'numeric'})}</div>
-                          <div style={{ fontSize:8, color:'var(--hint)' }}>{retDt.toLocaleDateString('en-CA',{weekday:'short'})}</div>
-                        </div>
-                      )}
+                    <th key={dt} style={thStyle(isBase)}>
+                      {isBase && <div style={{ fontSize:8, color:'var(--accent)', marginBottom:2 }}>★</div>}
+                      <div style={{ fontWeight:800 }}>{short}</div>
+                      <div style={{ fontSize:9, color:'var(--hint)' }}>{day}</div>
                     </th>
                   )
                 })}
               </tr>
             </thead>
             <tbody>
-              {gridData.airlines.map((airline) => (
-                <tr key={airline.name} style={{ borderBottom:'0.5px solid var(--border)' }}>
+              {gridData.rows.map(row => (
+                <tr key={row.name} style={{ borderBottom:'0.5px solid var(--border)' }}>
                   <td style={{ padding:'8px 10px', position:'sticky', left:0, background:'var(--surface)', whiteSpace:'nowrap' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                      <span style={{ fontFamily:'DM Mono,monospace', fontSize:10, fontWeight:800, color:'var(--accent)', minWidth:28 }}>{airline.code}</span>
-                      <span style={{ fontSize:11, fontWeight:600 }}>{airline.name}</span>
+                      <span style={{ fontFamily:'DM Mono,monospace', fontSize:10, fontWeight:800, color:'var(--accent)', minWidth:28 }}>{row.code}</span>
+                      <span style={{ fontSize:11, fontWeight:600 }}>{row.name}</span>
                     </div>
                   </td>
-                  {gridData.dates.map(dt => {
-                    const price = airline.prices[dt]
-                    const isBase = dt === baseDate
+                  {gridData.outDates.map(dt => {
+                    const price = row.prices[dt]
                     const isMin = price && price === gridData.minP
+                    const isBase = dt === baseDate
                     return (
-                      <td key={dt} style={{ padding:'6px 8px', textAlign:'center', background:price?cellColor(price,gridData.minP,gridData.maxP):'transparent', border:isBase?'1px solid rgba(110,231,183,0.3)':'none' }}>
+                      <td key={dt} style={{ padding:'7px 8px', textAlign:'center', background: price ? cellColor(price, gridData.minP, gridData.maxP) : 'transparent', outline: isBase ? '1px solid rgba(110,231,183,0.3)' : 'none' }}>
                         {price
                           ? <div>
-                              <div style={{ fontSize:12, fontWeight:800, fontFamily:'DM Mono,monospace', color:isMin?'var(--green)':'var(--text)' }}>
-                                ${price.toLocaleString()}
-                              </div>
+                              <div style={{ fontSize:12, fontWeight:800, fontFamily:'DM Mono,monospace', color:isMin?'var(--green)':'var(--text)' }}>${price.toLocaleString()}</div>
                               {isMin && <div style={{ fontSize:8, color:'var(--green)', fontWeight:700 }}>BEST</div>}
                             </div>
-                          : <span style={{ color:'var(--hint)', fontSize:11 }}>—</span>
+                          : <span style={{ color:'var(--hint)' }}>—</span>
                         }
                       </td>
                     )
                   })}
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ROUND TRIP: outbound (X cols) × inbound (Y rows) */}
+      {gridData?.mode === 'roundtrip' && (
+        <div style={{ overflowX:'auto' }}>
+          <div style={{ display:'flex', gap:8, marginBottom:8, alignItems:'center' }}>
+            <span style={{ fontSize:10, color:'var(--accent)', fontWeight:700 }}>↓ Return date (Y)</span>
+            <span style={{ fontSize:10, color:'var(--muted)' }}>·</span>
+            <span style={{ fontSize:10, color:'var(--accent)', fontWeight:700 }}>→ Outbound date (X)</span>
+            <span style={{ fontSize:10, color:'var(--muted)' }}>· cells = cheapest round-trip price</span>
+          </div>
+          <table style={{ borderCollapse:'collapse', fontSize:12 }}>
+            <thead>
+              <tr>
+                {/* Top-left corner label */}
+                <th style={{ padding:'8px 10px', fontSize:10, color:'var(--muted)', fontWeight:700, borderBottom:'0.5px solid var(--border)', borderRight:'0.5px solid var(--border)', position:'sticky', left:0, background:'var(--surface)', whiteSpace:'nowrap', textAlign:'center' }}>
+                  <div style={{ color:'var(--blue)', fontSize:9 }}>↩ Return</div>
+                  <div style={{ color:'var(--hint)', fontSize:8 }}>↓ \ Outbound →</div>
+                </th>
+                {/* Outbound date column headers */}
+                {gridData.outDates.map(dt => {
+                  const { short, day } = fmtDate(dt)
+                  const isBase = dt === baseDate
+                  return (
+                    <th key={dt} style={thStyle(isBase)}>
+                      {isBase && <div style={{ fontSize:8, color:'var(--accent)', marginBottom:2 }}>★ out</div>}
+                      <div style={{ fontWeight:800, color:'var(--accent)' }}>{short}</div>
+                      <div style={{ fontSize:9, color:'var(--hint)' }}>{day}</div>
+                    </th>
+                  )
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {gridData.inDates.map(inDt => {
+                const { short: inShort, day: inDay } = fmtDate(inDt)
+                const isBaseRet = inDt === effectiveRetBase
+                return (
+                  <tr key={inDt} style={{ borderBottom:'0.5px solid var(--border)' }}>
+                    {/* Return date row header */}
+                    <td style={{ padding:'8px 10px', position:'sticky', left:0, background: isBaseRet ? 'rgba(59,130,246,0.07)' : 'var(--surface)', borderRight:'0.5px solid var(--border)', whiteSpace:'nowrap', textAlign:'center' }}>
+                      {isBaseRet && <div style={{ fontSize:8, color:'var(--blue)', marginBottom:1 }}>★ ret</div>}
+                      <div style={{ fontSize:11, fontWeight:800, color:'var(--blue)' }}>{inShort}</div>
+                      <div style={{ fontSize:9, color:'var(--hint)' }}>{inDay}</div>
+                    </td>
+                    {/* Price cells */}
+                    {gridData.outDates.map(outDt => {
+                      const price = outDt < inDt ? gridData.matrix[outDt]?.[inDt] : null
+                      const isMin = price && price === gridData.minP
+                      const isBaseOut = outDt === baseDate
+                      return (
+                        <td key={outDt} style={{ padding:'7px 8px', textAlign:'center',
+                          background: price ? cellColor(price, gridData.minP, gridData.maxP) : outDt >= inDt ? 'rgba(0,0,0,0.15)' : 'transparent',
+                          outline: (isBaseOut && isBaseRet) ? '1.5px solid rgba(110,231,183,0.5)' : isBaseOut ? '1px solid rgba(110,231,183,0.25)' : 'none' }}>
+                          {outDt >= inDt
+                            ? <span style={{ color:'var(--hint)', fontSize:10 }}>✕</span>
+                            : price
+                              ? <div>
+                                  <div style={{ fontSize:12, fontWeight:800, fontFamily:'DM Mono,monospace', color:isMin?'var(--green)':'var(--text)' }}>${price.toLocaleString()}</div>
+                                  {isMin && <div style={{ fontSize:8, color:'var(--green)', fontWeight:700 }}>BEST</div>}
+                                </div>
+                              : <span style={{ color:'var(--hint)' }}>—</span>
+                          }
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -599,7 +727,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
 
       {/* Price Grid tab */}
       {activeTab==='grid' && (
-        <PriceGrid origin={origin} destination={destination} baseDate={depDate} cabin={cabin} passengers={passengers} />
+        <PriceGrid origin={origin} destination={destination} baseDate={depDate} retDate={retDate} cabin={cabin} passengers={passengers} />
       )}
 
       {/* History tab */}
