@@ -213,14 +213,14 @@ function PriceGrid({ origin, destination, baseDate, cabin, passengers }) {
         })
       })
 
-      // Sort airlines by average price
+      // Sort airlines by minimum price across dates
       const airlines = Object.entries(airlineMap)
         .map(([name, info]) => {
           const vals = Object.values(info.prices).filter(Boolean)
-          const avg = vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : Infinity
-          return { name, code: info.code, prices: info.prices, avg }
+          const minPrice = vals.length ? Math.min(...vals) : Infinity
+          return { name, code: info.code, prices: info.prices, minPrice }
         })
-        .sort((a,b) => a.avg - b.avg)
+        .sort((a,b) => a.minPrice - b.minPrice)
 
       // Find min/max for color scaling
       const allPrices = airlines.flatMap(a => Object.values(a.prices).filter(Boolean))
@@ -306,35 +306,35 @@ function PriceGrid({ origin, destination, baseDate, cabin, passengers }) {
                 <th style={{ textAlign:'left', padding:'8px 10px', fontSize:11, color:'var(--muted)', fontWeight:700, borderBottom:'0.5px solid var(--border)', position:'sticky', left:0, background:'var(--surface)', whiteSpace:'nowrap' }}>
                   Airline
                 </th>
-                <th style={{ padding:'8px 10px', fontSize:11, color:'var(--muted)', fontWeight:700, borderBottom:'0.5px solid var(--border)', whiteSpace:'nowrap', textAlign:'center' }}>
-                  Avg
-                </th>
-                {gridData.dates.map((dt, i) => {
+                {gridData.dates.map((dt) => {
                   const d = new Date(dt)
                   const isBase = dt === baseDate
+                  // Compute return date for this column
+                  const retDt = (() => { const rd = new Date(dt); rd.setDate(rd.getDate()+returnDays); return rd })()
                   return (
-                    <th key={dt} style={{ padding:'8px 8px', fontSize:10, color:isBase?'var(--accent)':'var(--muted)', fontWeight:700, borderBottom:'0.5px solid var(--border)', whiteSpace:'nowrap', textAlign:'center', minWidth:80, background:isBase?'rgba(110,231,183,0.06)':'transparent' }}>
+                    <th key={dt} style={{ padding:'8px 8px', fontSize:10, color:isBase?'var(--accent)':'var(--muted)', fontWeight:700, borderBottom:'0.5px solid var(--border)', whiteSpace:'nowrap', textAlign:'center', minWidth:90, background:isBase?'rgba(110,231,183,0.06)':'transparent' }}>
                       {isBase && <div style={{ fontSize:8, color:'var(--accent)', marginBottom:2 }}>★ selected</div>}
-                      {d.toLocaleDateString('en-CA',{month:'short',day:'numeric'})}
+                      <div style={{ fontWeight:800 }}>{d.toLocaleDateString('en-CA',{month:'short',day:'numeric'})}</div>
                       <div style={{ fontSize:9, color:'var(--hint)' }}>{d.toLocaleDateString('en-CA',{weekday:'short'})}</div>
+                      {tripType === 'roundtrip' && (
+                        <div style={{ marginTop:3, paddingTop:3, borderTop:'0.5px solid var(--border)' }}>
+                          <div style={{ fontSize:9, color:'var(--blue)', fontWeight:700 }}>↩ {retDt.toLocaleDateString('en-CA',{month:'short',day:'numeric'})}</div>
+                          <div style={{ fontSize:8, color:'var(--hint)' }}>{retDt.toLocaleDateString('en-CA',{weekday:'short'})}</div>
+                        </div>
+                      )}
                     </th>
                   )
                 })}
               </tr>
             </thead>
             <tbody>
-              {gridData.airlines.map((airline, ai) => (
+              {gridData.airlines.map((airline) => (
                 <tr key={airline.name} style={{ borderBottom:'0.5px solid var(--border)' }}>
                   <td style={{ padding:'8px 10px', position:'sticky', left:0, background:'var(--surface)', whiteSpace:'nowrap' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:6 }}>
                       <span style={{ fontFamily:'DM Mono,monospace', fontSize:10, fontWeight:800, color:'var(--accent)', minWidth:28 }}>{airline.code}</span>
                       <span style={{ fontSize:11, fontWeight:600 }}>{airline.name}</span>
                     </div>
-                  </td>
-                  <td style={{ padding:'8px 8px', textAlign:'center' }}>
-                    <span style={{ fontSize:11, fontWeight:700, fontFamily:'DM Mono,monospace', color:'var(--muted)' }}>
-                      {airline.avg === Infinity ? '—' : `$${airline.avg.toLocaleString()}`}
-                    </span>
                   </td>
                   {gridData.dates.map(dt => {
                     const price = airline.prices[dt]
