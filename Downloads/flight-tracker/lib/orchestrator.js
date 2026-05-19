@@ -24,6 +24,22 @@ const T = {
   agent:     22000,
 }
 
+// Cache Duffel main search — re-run at most every 2 minutes
+// Duffel's free tier rate limit is ~1 offer_request per minute
+const duffelCache = new Map()
+const DUFFEL_CACHE_TTL = 2 * 60 * 1000 // 2 minutes
+
+function getCachedDuffel(key) {
+  const entry = duffelCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.ts > DUFFEL_CACHE_TTL) { duffelCache.delete(key); return null }
+  return entry.results
+}
+
+function setCachedDuffel(key, results) {
+  duffelCache.set(key, { ts: Date.now(), results })
+}
+
 // Cache VI results per route — re-run at most every 5 minutes
 // This prevents VI from hammering Duffel on every 30s refresh tick
 const viCache = new Map() // key: `${origin}-${destination}-${date}` → { ts, results }
@@ -71,9 +87,12 @@ export async function orchestrateSearch({
 
   const params = { origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins, maxLayoverMins }
 
-  const viCacheKey = `${origin}-${destination}-${date}`
-  const cachedVI   = getCachedVI(viCacheKey)
-  if (cachedVI) log('VI: serving from cache')
+  const cacheKey     = `${origin}-${destination}-${date}-${cabin}-${passengers}`
+  const viCacheKey   = `${origin}-${destination}-${date}`
+  const cachedVI     = getCachedVI(viCacheKey)
+  const cachedDuffel = getCachedDuffel(cacheKey)
+  if (cachedVI)     log('VI: from cache (5min TTL)')
+  if (cachedDuffel) log('Duffel: from cache (2min TTL)')
 
   // ── Fire ALL APIs simultaneously ──────────────────────────────────────
   const [rSerp, rKiwi, rDuffel, rTP, rVI, rAgent] = await Promise.allSettled([
@@ -86,12 +105,15 @@ export async function orchestrateSearch({
       : Promise.resolve(null),
 
     hasDuffel
-      ? raceTimeout(
-          new DuffelClient(process.env.DUFFEL_ACCESS_TOKEN).searchOffers({
-            origin, destination, departureDate: date, returnDate,
-            adults: parseInt(passengers), cabinClass: cabin,
-            minLayoverMins, maxLayoverMins, currency,
-          }), T.duffel, 'Duffel')
+      ? cachedDuffel
+        ? Promise.resolve(cachedDuffel)
+        : raceTimeout(
+            new DuffelClient(process.env.DUFFEL_ACCESS_TOKEN).searchOffers({
+              origin, destination, departureDate: date, returnDate,
+              adults: parseInt(passengers), cabinClass: cabin,
+              minLayoverMins, maxLayoverMins, currency,
+            }).then(r => { if (r) setCachedDuffel(cacheKey, r); return r }),
+            T.duffel, 'Duffel')
       : Promise.resolve(null),
 
     hasTravelpayouts
@@ -100,9 +122,7 @@ export async function orchestrateSearch({
 
     hasVI
       ? cachedVI
-        // Use cached VI result — no Duffel calls needed this tick
         ? Promise.resolve(cachedVI)
-        // Run fresh VI search: delay 2s so main Duffel finishes first
         : raceTimeout(
             new Promise(resolve => setTimeout(resolve, 2000))
               .then(() => searchVirtualInterline({ origin, destination, date, cabin, passengers, minLayoverMins, currency }))
