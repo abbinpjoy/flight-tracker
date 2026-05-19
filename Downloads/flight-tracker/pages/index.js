@@ -498,19 +498,20 @@ export default function FlightTracker() {
   }
 
   // Routes through /api/book which:
-  // - For Duffel: creates a proper Duffel Links session server-side then redirects
-  // - For SerpAPI: redirects to the exact Google Flights URL from metadata
-  // - For others: builds airline-specific deep link with route pre-filled
+  // - For Duffel: tries Duffel Links session first, then airline deep link
+  // - For SerpAPI: redirects to the exact Google Flights URL from SerpAPI metadata
+  // - For all: airline-specific deep links with route + date pre-filled
   function getBookUrl(f) {
     const params = new URLSearchParams({
-      source:       f.source           || '',
-      offerId:      f.offerId          || '',
-      googleUrl:    f.googleFlightsUrl || '',
-      airline:      f.airline          || '',
-      code:         f.code             || '',
-      origin:       origin.toUpperCase(),
-      destination:  destination.toUpperCase(),
-      date:         depDate,
+      source:        f.source           || '',
+      offerId:       f.offerId          || '',
+      googleUrl:     f.googleFlightsUrl || '',
+      airline:       f.airline          || '',
+      code:          f.code             || '',
+      flightNumber:  f.flightNumber     || '',
+      origin:        origin.toUpperCase(),
+      destination:   destination.toUpperCase(),
+      date:          depDate,
       cabin,
     })
     return `/api/book?${params.toString()}`
