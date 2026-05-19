@@ -93,13 +93,13 @@ export default async function handler(req, res) {
       }),
     })
 
+    const data = await r.json()
     if (!r.ok) {
-      const err = await r.json()
-      console.error('Resend error:', err)
-      return res.status(200).json({ sent: false, error: err.message })
+      console.error('[notify] Resend error:', JSON.stringify(data))
+      return res.status(200).json({ sent: false, error: data.message || data.name || 'Resend error', resend: data })
     }
 
-    const data = await r.json()
+    console.log('[notify] Email sent:', data.id, '→', to)
     return res.status(200).json({ sent: true, id: data.id })
   } catch (err) {
     console.error('Email send failed:', err.message)

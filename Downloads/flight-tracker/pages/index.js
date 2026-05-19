@@ -346,9 +346,11 @@ export default function FlightTracker() {
   const [newAlertThresh,  setNewAlertThresh]  = useState('')
   const [newAlertAirline, setNewAlertAirline] = useState('')
 
-  const timerRef  = useRef(null)
-  const cdRef     = useRef(null)
-  const logRef    = useRef(null)
+  const timerRef      = useRef(null)
+  const cdRef         = useRef(null)
+  const logRef        = useRef(null)
+  // Track fired alerts: key = `alertId-flightKey` so each alert fires once per flight per session
+  const firedAlerts   = useRef(new Set())
 
   useEffect(() => {
     setHistory(ls.get('ft_history', {}))
@@ -429,15 +431,47 @@ export default function FlightTracker() {
         if (Object.keys(flashes).length) { setFlashMap(flashes); setTimeout(() => setFlashMap({}), 800) }
         const currentAlerts = ls.get('ft_alerts', [])
         const email = ls.get('ft_email', '')
-        newFlights.forEach(async f => {
+        for (const f of newFlights) {
           for (const a of currentAlerts) {
-            if (f.price <= a.threshold && (!a.airline || a.airline === 'any' || f.code === a.airline || f.airline.includes(a.airline))) {
-              addLog('ok', `🔔 ALERT: ${f.airline} CA$${f.price.toLocaleString()} ≤ threshold CA$${a.threshold.toLocaleString()}`)
-              sendBrowserNotification(`✈ Price Drop! ${origin}→${destination}`, `${f.airline}: CA$${f.price.toLocaleString()}`, f.bookUrl)
-              if (email) { const sent = await sendEmailAlert({ to: email, airline: f.airline, price: f.price, route: `${origin} → ${destination}`, date: depDate, bookUrl: f.bookUrl, threshold: a.threshold }); if (sent) addLog('ok', `📧 Email sent to ${email}`) }
+            // Check price threshold and airline match
+            const airlineMatch = !a.airline || a.airline === 'any'
+              || f.code === a.airline
+              || (f.airline || '').toLowerCase().includes((a.airline || '').toLowerCase())
+            if (!airlineMatch) continue
+            if (f.price <= 0 || f.price > a.threshold) continue
+
+            // Deduplicate: only fire once per alert+flight combination per session
+            const fireKey = `${a.id}-${f.code}-${f.stops}-${f.via || 'direct'}`
+            if (firedAlerts.current.has(fireKey)) continue
+            firedAlerts.current.add(fireKey)
+
+            addLog('ok', `🔔 ALERT: ${f.airline} CA$${f.price.toLocaleString()} ≤ CA$${a.threshold.toLocaleString()}`)
+            sendBrowserNotification(
+              `✈ Price Drop! ${origin}→${destination}`,
+              `${f.airline}: CA$${f.price.toLocaleString()}`,
+              f.bookUrl || null
+            )
+
+            if (email) {
+              addLog('info', `📧 Sending alert email to ${email}...`)
+              const bookUrl = f.bookUrl || `https://www.google.com/travel/flights?q=flights+${origin}+to+${destination}+${depDate}`
+              sendEmailAlert({
+                to:        email,
+                airline:   f.airline,
+                price:     f.price,
+                route:     `${origin} → ${destination}`,
+                date:      depDate,
+                bookUrl,
+                threshold: a.threshold,
+              }).then(sent => {
+                if (sent) addLog('ok',   `📧 Email sent to ${email}`)
+                else      addLog('warn', `📧 Email failed — check RESEND_API_KEY in Vercel and that ${email} is a verified sender`)
+              })
+            } else {
+              addLog('warn', '📧 No email set — go to Notifications tab to add your email')
             }
           }
-        })
+        }
         return newFlights
       })
 
@@ -460,6 +494,7 @@ export default function FlightTracker() {
 
   const startTracking = useCallback(async () => {
     setIsTracking(true); setTickCount(0)
+    firedAlerts.current.clear()  // reset so alerts fire fresh each session
     const refreshLabel = refreshSecs < 60 ? `${refreshSecs}s` : refreshSecs < 3600 ? `${Math.round(refreshSecs/60)}m` : `${(refreshSecs/3600).toFixed(1).replace(/\.0$/,'')}h`
     addLog('info', `Tracking ${origin} → ${destination} · min layover ${minLayover}min · refresh ${refreshLabel}`)
     await doFetch()
