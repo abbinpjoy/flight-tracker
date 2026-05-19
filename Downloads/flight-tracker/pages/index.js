@@ -821,6 +821,8 @@ export default function FlightTracker() {
   const [newDepDate,   setNewDepDate]   = useState('2026-12-14')
   const [newRetDate,   setNewRetDate]   = useState('')
   const [newCabin,     setNewCabin]     = useState('economy')
+  const [newMaxStops,  setNewMaxStops]  = useState(2)
+  const [newMinLayover,setNewMinLayover]= useState(60)
 
   const logRef        = useRef(null)
   const firedAlerts   = useRef(new Set())
@@ -848,9 +850,9 @@ export default function FlightTracker() {
   function addRoute() {
     if (!newDest||routes.length>=5) return
     const id = Date.now()
-    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:'1', minLayover:60, maxStops:2, refreshSecs:30 }
+    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:'1', minLayover:newMinLayover, maxStops:newMaxStops, refreshSecs:30 }
     setRoutes(rs => [...rs, r]); setActiveRoute(id); setShowAddRoute(false)
-    setNewDest(''); setNewRetDate('')
+    setNewDest(''); setNewRetDate(''); setNewMaxStops(2); setNewMinLayover(60)
     addLog('ok', `Route added: ${newOrigin} → ${newDest}`)
   }
 
@@ -934,6 +936,26 @@ export default function FlightTracker() {
             <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Cabin</div>
             <select value={newCabin} onChange={e=>setNewCabin(e.target.value)} style={{ ...inputStyle, width:120 }}>
               {[['economy','Economy'],['premium_economy','Prem Eco'],['business','Business'],['first','First']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div>
+            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Max stops</div>
+            <div style={{ display:'flex', gap:4 }}>
+              {[['0','Direct'],['1','1'],['2','2'],['9','Any']].map(([v,l]) => (
+                <button key={v} onClick={()=>setNewMaxStops(+v)}
+                  style={{ padding:'4px 8px', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer', height:34,
+                    border:`0.5px solid ${newMaxStops===+v?'rgba(110,231,183,.5)':'var(--border)'}`,
+                    background:newMaxStops===+v?'var(--accent-dim)':'var(--card)',
+                    color:newMaxStops===+v?'var(--accent)':'var(--muted)' }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Min layover</div>
+            <select value={newMinLayover} onChange={e=>setNewMinLayover(+e.target.value)} style={{ ...inputStyle, width:90 }}>
+              {[[0,'None'],[30,'30m'],[60,'1h'],[90,'1.5h'],[120,'2h'],[180,'3h'],[240,'4h']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
             </select>
           </div>
           <button onClick={addRoute} style={{ ...primaryBtn, height:34, padding:'0 18px' }}>Add Route</button>
