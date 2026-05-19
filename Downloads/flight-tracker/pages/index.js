@@ -485,7 +485,7 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
 
 // ── Single route tracker ──────────────────────────────────────────────────
 function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlertsRef }) {
-  const { id, origin, destination, depDate, retDate, cabin, passengers, minLayover, refreshSecs } = route
+  const { id, origin, destination, depDate, retDate, cabin, passengers, minLayover, maxStops, refreshSecs } = route
 
   const [flights,    setFlights]    = useState([])
   const [history,    setHistory]    = useState({})
@@ -613,13 +613,18 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
 
   useEffect(() => () => { clearInterval(timerRef.current); clearInterval(cdRef.current) }, [])
 
-  const sorted = useMemo(() => [...flights].sort((a,b) => {
-    if (sortBy==='price')    return (a.price||0)-(b.price||0)
-    if (sortBy==='duration') return (a.durationMins||0)-(b.durationMins||0)
-    if (sortBy==='stops')    return (a.stops||0)-(b.stops||0)
-    if (sortBy==='rating')   return (b.rating||0)-(a.rating||0)
-    return (a.price||0)-(b.price||0)
-  }), [flights, sortBy])
+  const sorted = useMemo(() => {
+    const maxS = maxStops ?? 2
+    return [...flights]
+      .filter(f => f.isVirtualInterline || (f.stops ?? 0) <= maxS)
+      .sort((a,b) => {
+        if (sortBy==='price')    return (a.price||0)-(b.price||0)
+        if (sortBy==='duration') return (a.durationMins||0)-(b.durationMins||0)
+        if (sortBy==='stops')    return (a.stops||0)-(b.stops||0)
+        if (sortBy==='rating')   return (b.rating||0)-(a.rating||0)
+        return (a.price||0)-(b.price||0)
+      })
+  }, [flights, sortBy, maxStops])
 
   const cheapest = flights.length ? Math.min(...flights.map(f=>f.price)) : null
   const histChartData = (() => {
@@ -661,7 +666,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
 
       {/* Tabs */}
       <div style={{ display:'flex', gap:4, marginBottom:12, flexWrap:'wrap' }}>
-        {[['flights',`Flights (${flights.length})`],['grid','Price Grid'],['history','History']].map(([tid,lbl])=>(
+        {[['flights',`Flights (${sorted.length}${sorted.length<flights.length?`/${flights.length}`:''})`],['grid','Price Grid'],['history','History']].map(([tid,lbl])=>(
           <button key={tid} onClick={()=>setActiveTab(tid)} style={{ padding:'5px 12px', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:7, cursor:'pointer', background:activeTab===tid?'var(--accent-dim)':'transparent', border:`0.5px solid ${activeTab===tid?'rgba(110,231,183,.3)':'var(--border)'}`, color:activeTab===tid?'var(--accent)':'var(--muted)' }}>
             {lbl}
           </button>
@@ -797,7 +802,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
 }
 
 // ── Main app ──────────────────────────────────────────────────────────────
-const DEFAULT_ROUTE = { id:1, origin:'YVR', destination:'COK', depDate:'2026-12-14', retDate:'', cabin:'economy', passengers:'1', minLayover:60, refreshSecs:30 }
+const DEFAULT_ROUTE = { id:1, origin:'YVR', destination:'COK', depDate:'2026-12-14', retDate:'', cabin:'economy', passengers:'1', minLayover:60, maxStops:2, refreshSecs:30 }
 
 export default function FlightTracker() {
   const [routes,       setRoutes]       = useState([{ ...DEFAULT_ROUTE }])
@@ -843,7 +848,7 @@ export default function FlightTracker() {
   function addRoute() {
     if (!newDest||routes.length>=5) return
     const id = Date.now()
-    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:'1', minLayover:60, refreshSecs:30 }
+    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:'1', minLayover:60, maxStops:2, refreshSecs:30 }
     setRoutes(rs => [...rs, r]); setActiveRoute(id); setShowAddRoute(false)
     setNewDest(''); setNewRetDate('')
     addLog('ok', `Route added: ${newOrigin} → ${newDest}`)
@@ -982,6 +987,16 @@ export default function FlightTracker() {
               </div>
               <Divider />
               <SLabel>Filters</SLabel>
+              <Field label="Max stops">
+                <div style={{ display:'flex', gap:6 }}>
+                  {[['0','Direct only'],['1','1 stop'],['2','2 stops'],['9','Any']].map(([v,l]) => (
+                    <button key={v} onClick={()=>updateRoute('maxStops', +v)}
+                      style={{ flex:1, padding:'5px 0', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer', border:`0.5px solid ${(cur.maxStops??2)===+v?'rgba(110,231,183,.5)':'var(--border)'}`, background:(cur.maxStops??2)===+v?'var(--accent-dim)':'var(--card)', color:(cur.maxStops??2)===+v?'var(--accent)':'var(--muted)' }}>
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              </Field>
               <Field label={`Min layover: ${cur.minLayover}min`}>
                 <input type="range" min={0} max={300} step={15} value={cur.minLayover} onChange={e=>updateRoute('minLayover',+e.target.value)} style={{ width:'100%' }} />
               </Field>
