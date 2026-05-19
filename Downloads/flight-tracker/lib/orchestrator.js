@@ -24,7 +24,21 @@ const T = {
   agent:     22000,
 }
 
-function raceTimeout(promise, ms, name) {
+// Cache VI results per route — re-run at most every 5 minutes
+// This prevents VI from hammering Duffel on every 30s refresh tick
+const viCache = new Map() // key: `${origin}-${destination}-${date}` → { ts, results }
+const VI_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+function getCachedVI(key) {
+  const entry = viCache.get(key)
+  if (!entry) return null
+  if (Date.now() - entry.ts > VI_CACHE_TTL) { viCache.delete(key); return null }
+  return entry.results
+}
+
+function setCachedVI(key, results) {
+  viCache.set(key, { ts: Date.now(), results })
+}
   return Promise.race([
     promise,
     new Promise((_, rej) =>
@@ -51,9 +65,12 @@ export async function orchestrateSearch({
   // Agent only fires when nothing else is configured
   const hasAgent        = !!apiKey && !hasSerpAPI && !hasKiwi && !hasDuffel && !hasTravelpayouts
 
-  log(`APIs — SerpAPI:${hasSerpAPI} Travelpayouts:${hasTravelpayouts} Duffel:${hasDuffel} VI:${hasVI} Kiwi:${hasKiwi} Agent:${hasAgent}`)
+  log(`APIs — SerpAPI:${hasSerpAPI} Travelpayouts:${hasTravelpayouts} Duffel:${hasDuffel} VI:${hasVI}${cachedVI?' (cached)':''} Kiwi:${hasKiwi} Agent:${hasAgent}`)
 
   const params = { origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins, maxLayoverMins }
+
+  const viCacheKey = `${origin}-${destination}-${date}`
+  const cachedVI   = getCachedVI(viCacheKey)
 
   // ── Fire ALL APIs simultaneously ──────────────────────────────────────
   const [rSerp, rKiwi, rDuffel, rTP, rVI, rAgent] = await Promise.allSettled([
@@ -79,12 +96,15 @@ export async function orchestrateSearch({
       : Promise.resolve(null),
 
     hasVI
-      ? raceTimeout(
-          // Delay VI by 2s so the main Duffel search completes first,
-          // avoiding simultaneous rate-limit collisions
-          new Promise(resolve => setTimeout(resolve, 2000))
-            .then(() => searchVirtualInterline({ origin, destination, date, cabin, passengers, minLayoverMins, currency })),
-          T.virtualinterline, 'VirtualInterline')
+      ? cachedVI
+        // Use cached VI result — no Duffel calls needed this tick
+        ? Promise.resolve(cachedVI)
+        // Run fresh VI search: delay 2s so main Duffel finishes first
+        : raceTimeout(
+            new Promise(resolve => setTimeout(resolve, 2000))
+              .then(() => searchVirtualInterline({ origin, destination, date, cabin, passengers, minLayoverMins, currency }))
+              .then(results => { if (results) setCachedVI(viCacheKey, results); return results }),
+            T.virtualinterline, 'VirtualInterline')
       : Promise.resolve(null),
 
     hasAgent

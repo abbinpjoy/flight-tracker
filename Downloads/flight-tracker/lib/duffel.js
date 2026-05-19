@@ -14,7 +14,7 @@ export class DuffelClient {
     this.base  = 'https://api.duffel.com'
   }
 
-  async request(method, path, body = null) {
+  async request(method, path, body = null, retries = 2) {
     const url = `${this.base}/air${path}`
     const opts = {
       method,
@@ -30,14 +30,31 @@ export class DuffelClient {
     const res = await fetch(url, opts)
 
     if (!res.ok) {
+      // On 429, read the ratelimit-reset header and wait before retrying
+      if (res.status === 429 && retries > 0) {
+        const resetAfter = parseInt(res.headers.get('ratelimit-reset') || '2', 10)
+        const waitMs = Math.max(resetAfter * 1000, 2000) // at least 2s
+        console.warn(`[Duffel] 429 rate limit — retrying in ${waitMs}ms (${retries} retries left)`)
+        await new Promise(r => setTimeout(r, waitMs))
+        return this.request(method, path, body, retries - 1)
+      }
+
       let detail = `HTTP ${res.status}`
       try {
-        const j = await res.json()
+        const text = await res.text()
+        const j = JSON.parse(text)
         detail = j.errors?.[0]?.message || j.errors?.[0]?.title || detail
       } catch {}
       throw new Error(`Duffel ${res.status}: ${detail}`)
     }
-    return res.json()
+
+    // Guard against non-JSON responses (e.g. Cloudflare error pages)
+    const text = await res.text()
+    try {
+      return JSON.parse(text)
+    } catch {
+      throw new Error(`Duffel non-JSON response: ${text.slice(0, 80)}`)
+    }
   }
 
   async searchOffers({
