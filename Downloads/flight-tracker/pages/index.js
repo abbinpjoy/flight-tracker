@@ -616,7 +616,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
   const sorted = useMemo(() => {
     const maxS = maxStops ?? 2
     return [...flights]
-      .filter(f => f.isVirtualInterline || (f.stops ?? 0) <= maxS)
+      .filter(f => (f.stops ?? 0) <= maxS)
       .sort((a,b) => {
         if (sortBy==='price')    return (a.price||0)-(b.price||0)
         if (sortBy==='duration') return (a.durationMins||0)-(b.durationMins||0)
