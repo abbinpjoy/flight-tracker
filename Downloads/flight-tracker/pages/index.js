@@ -499,17 +499,18 @@ export default function FlightTracker() {
 
   // Routes through /api/book which:
   // - For Duffel: creates a proper Duffel Links session server-side then redirects
-  // - For others: builds best airline booking deep link with route pre-filled
+  // - For SerpAPI: redirects to the exact Google Flights URL from metadata
+  // - For others: builds airline-specific deep link with route pre-filled
   function getBookUrl(f) {
     const params = new URLSearchParams({
-      source:       f.source      || '',
-      offerId:      f.offerId     || '',
-      airline:      f.airline     || '',
-      code:         f.code        || '',
+      source:       f.source           || '',
+      offerId:      f.offerId          || '',
+      googleUrl:    f.googleFlightsUrl || '',
+      airline:      f.airline          || '',
+      code:         f.code             || '',
       origin:       origin.toUpperCase(),
       destination:  destination.toUpperCase(),
       date:         depDate,
-      flightNumber: f.flightNumber || '',
       cabin,
     })
     return `/api/book?${params.toString()}`

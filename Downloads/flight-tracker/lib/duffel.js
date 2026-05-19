@@ -173,9 +173,9 @@ export class DuffelClient {
           refundable:    offer.conditions?.refund_before_departure?.allowed ?? false,
           changeable:    offer.conditions?.change_before_departure?.allowed ?? false,
           rating:        airlineRating(code),
-          // Duffel Links — deep link directly to this specific offer's booking page
-          // Format: https://book.duffel.com/offers/{offer_id}
-          bookUrl:       `https://book.duffel.com/offers/${offer.id}`,
+          // /api/book will try to create a Duffel Links session for this offer ID
+          // If that fails (test mode limitation), it falls back to Duffel-hosted search
+          bookUrl:       null,
           offerId:       offer.id,
           expiresAt:     offer.expires_at,
           source:        'duffel',
