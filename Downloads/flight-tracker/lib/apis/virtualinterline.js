@@ -97,7 +97,19 @@ export async function searchVirtualInterline({
     // Top 2 out × top 2 in per hub = up to 4 combos per hub
     for (const legOut of cheapOut.slice(0,2)) {
       for (const legIn of cheapIn.slice(0,2)) {
+        // ── Apply layover filter to each individual leg ──────────────────
+        // If a leg has a layover shorter than the user's minimum, skip it
+        if (legOut.minLayoverMins !== null && legOut.minLayoverMins < minLayoverMins) continue
+        if (legIn.minLayoverMins  !== null && legIn.minLayoverMins  < minLayoverMins) continue
+
         const total = legOut.price + legIn.price
+
+        // ── Compute real stops count ─────────────────────────────────────
+        // Each leg may itself be multi-stop (e.g. YVR→SFO→DOH = 1 stop on leg 1)
+        // Total stops = stops on leg 1 + hub transfer (1) + stops on leg 2
+        const legOutStops = legOut.stops ?? 0
+        const legInStops  = legIn.stops  ?? 0
+        const totalStops  = legOutStops + 1 + legInStops  // +1 for the hub self-transfer
 
         // Dedup: skip if we already have same airline pair at same price
         const key = `${legOut.code}-${legIn.code}-${hub}`
@@ -114,8 +126,8 @@ export async function searchVirtualInterline({
           departure:    legOut.departure || '—',
           arrival:      legIn.arrival   || '—',
           duration:     '—',
-          durationMins: 0,
-          stops:        1,
+          durationMins: (legOut.durationMins||0) + (legIn.durationMins||0),
+          stops:        totalStops,
           via:          hub,
           segments:     [
             ...(legOut.segments?.length
@@ -125,7 +137,10 @@ export async function searchVirtualInterline({
               ? legIn.segments
               : [{ from:hub, to:destination, dep:'—', arr:legIn.arrival||'—', airline:legIn.airline, flight:legIn.flightNumber||'' }]),
           ],
-          minLayoverMins: estLayoverH * 60,
+          minLayoverMins: Math.min(
+            legOut.minLayoverMins ?? estLayoverH * 60,
+            legIn.minLayoverMins  ?? estLayoverH * 60,
+          ),
           maxLayoverMins: null,
           price:        total,
           currency:     'CAD',
@@ -133,8 +148,7 @@ export async function searchVirtualInterline({
           refundable:   false,
           changeable:   false,
           rating:       +( ((legOut.rating||3.8)+(legIn.rating||3.8))/2 ).toFixed(1),
-          bookUrl:      null,  // VI flights have two booking links
-          // Virtual interline specific fields
+          bookUrl:      null,
           isVirtualInterline: true,
           leg1: {
             airline:  legOut.airline,

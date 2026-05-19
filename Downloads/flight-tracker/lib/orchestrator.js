@@ -184,7 +184,6 @@ export async function orchestrateSearch({
 
   // ── Layover filter ────────────────────────────────────────────────────
   const layoverValid = allFlights.filter(f => {
-    if (f.isVirtualInterline) return true // VI handles its own layover logic
     if (!f.stops || f.stops === 0) return true
     const min = f.minLayoverMins ?? null
     if (min === null) return true
