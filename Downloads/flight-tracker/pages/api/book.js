@@ -1,11 +1,16 @@
 /**
  * /api/book
  *
- * Duffel Links = 403 unavailable on this account.
- * Instead: redirect straight to the airline's own booking page
- * with origin, destination, date, cabin, and flight number pre-filled.
+ * Server-side booking redirect.
  *
- * SerpAPI: redirect to exact Google Flights URL from SerpAPI metadata.
+ * SERPAPI flights:
+ *   → Use the exact googleFlightsUrl returned by SerpAPI which loads the same
+ *     search Google ran. This is the most accurate "view this flight" link
+ *     since Google Flights doesn't support deep-linking to a specific itinerary.
+ *
+ * Duffel & others (no booking_token):
+ *   → Build the airline's own booking page URL with origin/dest/date/cabin/passengers
+ *     pre-filled. Falls back to Google Flights search if airline isn't recognised.
  */
 export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end()
@@ -13,141 +18,264 @@ export default async function handler(req, res) {
   const {
     source, googleUrl,
     airline = '', code = '',
-    origin = '', destination = '', date = '', cabin = 'economy',
+    origin = '', destination = '', date = '',
+    returnDate = '', cabin = 'economy', passengers = '1',
   } = req.query
 
   const o    = origin.toUpperCase().trim()
   const d    = destination.toUpperCase().trim()
   const dt   = date.trim()
+  const rdt  = (returnDate || '').trim()
+  const pax  = parseInt(passengers) || 1
   const name = airline.toLowerCase()
   const ac   = code.toUpperCase()
 
-  // ── SERPAPI ──────────────────────────────────────────────────────────
+  // Map cabin to airline-specific codes
+  const cabinCodes = {
+    economy:         { Q: 'E',    EK: 'economy',  EY: 'economy', AI: 'E',  SQ: 'Y',  LH: 'economy', BA: 'M',  AC: 'lowest',  KL: 'Economy', AF: 'EC',  TK: 'Economy', CX: 'economy', generic: 'Y' },
+    premium_economy: { Q: 'P',    EK: 'premium',  EY: 'premium', AI: 'P',  SQ: 'S',  LH: 'premium_economy', BA: 'W', AC: 'premium', KL: 'Premium Comfort', AF: 'EW', TK: 'Premium Economy', CX: 'premium', generic: 'W' },
+    business:        { Q: 'I',    EK: 'business', EY: 'business',AI: 'C',  SQ: 'C',  LH: 'business', BA: 'C',  AC: 'business',  KL: 'Business', AF: 'IC',  TK: 'Business', CX: 'business', generic: 'C' },
+    first:           { Q: 'F',    EK: 'first',    EY: 'first',   AI: 'F',  SQ: 'F',  LH: 'first', BA: 'F',  AC: 'first',  KL: 'First', AF: 'FC',  TK: 'First', CX: 'first', generic: 'F' },
+  }
+  const cabinFor = (airlineKey) => cabinCodes[cabin]?.[airlineKey] || cabinCodes[cabin]?.generic || 'Y'
+
+  const tripType = rdt ? 'roundtrip' : 'oneway'
+
+  // ── SERPAPI: redirect to Google Flights using the URL SerpAPI returned ──
   if (source === 'serpapi_google_flights') {
     const gUrl = googleUrl ? decodeURIComponent(googleUrl) : ''
     if (gUrl.startsWith('https://www.google.com/travel/flights')) {
       return res.redirect(302, gUrl)
     }
-    return res.redirect(302,
-      `https://www.google.com/travel/flights?hl=en&gl=ca&curr=CAD` +
-      `&q=Flights+from+${o}+to+${d}+on+${dt}`)
+    // Fallback: build Google Flights URL with all params
+    const gParams = new URLSearchParams({
+      hl: 'en', gl: 'ca', curr: 'CAD',
+      departure_id: o, arrival_id: d,
+      outbound_date: dt,
+      travel_class: cabin === 'first' ? '4' : cabin === 'business' ? '3' : cabin === 'premium_economy' ? '2' : '1',
+      adults: String(pax),
+      type: rdt ? '1' : '2',
+    })
+    if (rdt) gParams.set('return_date', rdt)
+    return res.redirect(302, `https://www.google.com/travel/flights?${gParams}`)
   }
 
-  // ── AIRLINE DEEP LINKS ───────────────────────────────────────────────
-  // Matched by name OR IATA code. Route + date always pre-filled.
+  // ── AIRLINE DEEP LINKS ──────────────────────────────────────────────────
+  // Each airline's booking site with origin, destination, dates, cabin, passengers pre-filled
 
-  if (name.includes('qatar') || ac === 'QR')
-    return res.redirect(302,
-      `https://www.qatarairways.com/en-ca/flights/find-flights.html` +
-      `?bookingClass=E&tripType=O&from=${o}&to=${d}&departing=${dt}&adults=1&flexibleDate=off`)
+  // Qatar Airways
+  if (name.includes('qatar') || ac === 'QR') {
+    const u = new URL('https://www.qatarairways.com/en-ca/flights/find-flights.html')
+    u.searchParams.set('tripType', rdt ? 'R' : 'O')
+    u.searchParams.set('from', o); u.searchParams.set('to', d)
+    u.searchParams.set('departing', dt)
+    if (rdt) u.searchParams.set('returning', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('bookingClass', cabinFor('Q'))
+    u.searchParams.set('flexibleDate', 'off')
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('emirates') || ac === 'EK')
-    return res.redirect(302,
-      `https://www.emirates.com/ca/english/book/flights/#/searchFlights` +
-      `?from=${o}&to=${d}&departureDate=${dt}&adults=1&cabinClass=economy&tripType=oneway`)
+  // Emirates
+  if (name.includes('emirates') || ac === 'EK') {
+    const u = new URL('https://www.emirates.com/ca/english/book/flights/')
+    u.hash = `/searchFlights?from=${o}&to=${d}&departureDate=${dt}${rdt?`&returnDate=${rdt}`:''}&adults=${pax}&cabinClass=${cabinFor('EK')}&tripType=${rdt?'return':'oneway'}`
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('etihad') || ac === 'EY')
-    return res.redirect(302,
-      `https://www.etihad.com/en-ca/book/flights` +
-      `?tripType=OneWay&from=${o}&to=${d}&departureDate=${dt}&adults=1&cabin=economy`)
+  // Etihad
+  if (name.includes('etihad') || ac === 'EY') {
+    const u = new URL('https://www.etihad.com/en-ca/book/flights')
+    u.searchParams.set('tripType', rdt ? 'RoundTrip' : 'OneWay')
+    u.searchParams.set('from', o); u.searchParams.set('to', d)
+    u.searchParams.set('departureDate', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('cabin', cabinFor('EY'))
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('air india') || ac === 'AI')
-    return res.redirect(302,
-      `https://www.airindia.com/book-flights.htm` +
-      `?origin=${o}&destination=${d}&departDate=${dt}&adults=1&class=E&tripType=O`)
+  // Air India
+  if (name.includes('air india') || ac === 'AI') {
+    const u = new URL('https://www.airindia.com/book-flights.htm')
+    u.searchParams.set('origin', o); u.searchParams.set('destination', d)
+    u.searchParams.set('departDate', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('class', cabinFor('AI'))
+    u.searchParams.set('tripType', rdt ? 'R' : 'O')
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('singapore') || ac === 'SQ')
-    return res.redirect(302,
-      `https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form` +
-      `?tripType=O&departureCity=${o}&arrivalCity=${d}&departureDate=${dt}&adults=1&cabinClass=Y`)
+  // Singapore Airlines
+  if (name.includes('singapore') || ac === 'SQ') {
+    const u = new URL('https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form')
+    u.searchParams.set('tripType', rdt ? 'R' : 'O')
+    u.searchParams.set('departureCity', o); u.searchParams.set('arrivalCity', d)
+    u.searchParams.set('departureDate', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('cabinClass', cabinFor('SQ'))
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('lufthansa') || ac === 'LH')
-    return res.redirect(302,
-      `https://www.lufthansa.com/ca/en/flight-search` +
-      `?origin=${o}&destination=${d}&outboundDate=${dt}&adults=1&cabinClass=economy&tripType=ONE_WAY`)
+  // Lufthansa
+  if (name.includes('lufthansa') || ac === 'LH') {
+    const u = new URL('https://www.lufthansa.com/ca/en/flight-search')
+    u.searchParams.set('origin', o); u.searchParams.set('destination', d)
+    u.searchParams.set('outboundDate', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('cabinClass', cabinFor('LH'))
+    u.searchParams.set('tripType', rdt ? 'ROUND_TRIP' : 'ONE_WAY')
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('british airways') || ac === 'BA')
-    return res.redirect(302,
-      `https://www.britishairways.com/travel/book/public/en_ca` +
-      `?from=${o}&to=${d}&depart=${dt}&class=M&adult=1`)
+  // British Airways
+  if (name.includes('british airways') || ac === 'BA') {
+    const u = new URL('https://www.britishairways.com/travel/book/public/en_ca')
+    u.searchParams.set('from', o); u.searchParams.set('to', d)
+    u.searchParams.set('depart', dt)
+    if (rdt) u.searchParams.set('return', rdt)
+    u.searchParams.set('class', cabinFor('BA'))
+    u.searchParams.set('adult', String(pax))
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('air canada') || ac === 'AC')
-    return res.redirect(302,
-      `https://www.aircanada.com/ca/en/aco/home.html#/search` +
-      `?org0=${o}&dest0=${d}&departDate0=${dt}&ADT=1&lang=en-CA&tripType=O&cabin=lowest`)
+  // Air Canada
+  if (name.includes('air canada') || ac === 'AC') {
+    const u = new URL('https://www.aircanada.com/ca/en/aco/home.html')
+    u.hash = `/search?org0=${o}&dest0=${d}&departDate0=${dt}${rdt?`&org1=${d}&dest1=${o}&departDate1=${rdt}`:''}&ADT=${pax}&lang=en-CA&tripType=${rdt?'R':'O'}&cabin=${cabinFor('AC')}`
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('klm') || ac === 'KL')
-    return res.redirect(302,
-      `https://www.klm.com/travel/ca_en/apps/ebt/ebt_home.htm` +
-      `?lang=en&selectedJourney=ONE_WAY&origin=${o}&destination=${d}&outboundDate=${dt}&adults=1`)
+  // KLM
+  if (name.includes('klm') || ac === 'KL') {
+    const u = new URL('https://www.klm.com/travel/ca_en/apps/ebt/ebt_home.htm')
+    u.searchParams.set('lang', 'en')
+    u.searchParams.set('selectedJourney', rdt ? 'ROUND_TRIP' : 'ONE_WAY')
+    u.searchParams.set('origin', o); u.searchParams.set('destination', d)
+    u.searchParams.set('outboundDate', dt)
+    if (rdt) u.searchParams.set('inboundDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('cabin', cabinFor('KL'))
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('air france') || ac === 'AF')
-    return res.redirect(302,
-      `https://wwws.airfrance.ca/search/offers` +
-      `?pax=1:0:0:0:0:0:0:0&cabin=EC&tripType=ONE_WAY&code=OW&segments=0::${o}:${d}:${dt}`)
+  // Air France
+  if (name.includes('air france') || ac === 'AF') {
+    const segs = rdt
+      ? `0::${o}:${d}:${dt},1::${d}:${o}:${rdt}`
+      : `0::${o}:${d}:${dt}`
+    const u = new URL('https://wwws.airfrance.ca/search/offers')
+    u.searchParams.set('pax', `${pax}:0:0:0:0:0:0:0`)
+    u.searchParams.set('cabin', cabinFor('AF'))
+    u.searchParams.set('tripType', rdt ? 'ROUND_TRIP' : 'ONE_WAY')
+    u.searchParams.set('code', rdt ? 'RT' : 'OW')
+    u.searchParams.set('segments', segs)
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('turkish') || ac === 'TK')
-    return res.redirect(302,
-      `https://www.turkishairlines.com/en-ca/flights/` +
-      `?fromPort=${o}&toPort=${d}&tripType=O&departure=${dt}&adult=1&cabin=Economy`)
+  // Turkish Airlines
+  if (name.includes('turkish') || ac === 'TK') {
+    const u = new URL('https://www.turkishairlines.com/en-ca/flights/')
+    u.searchParams.set('fromPort', o); u.searchParams.set('toPort', d)
+    u.searchParams.set('tripType', rdt ? 'R' : 'O')
+    u.searchParams.set('departure', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adult', String(pax))
+    u.searchParams.set('cabin', cabinFor('TK'))
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('cathay') || ac === 'CX')
-    return res.redirect(302,
-      `https://www.cathaypacific.com/cx/en_CA/book-a-trip/flights/overview.html` +
-      `?origin=${o}&destination=${d}&departureDate=${dt}&tripType=oneWay&adults=1`)
+  // Cathay Pacific
+  if (name.includes('cathay') || ac === 'CX') {
+    const u = new URL('https://www.cathaypacific.com/cx/en_CA/book-a-trip/flights/overview.html')
+    u.searchParams.set('origin', o); u.searchParams.set('destination', d)
+    u.searchParams.set('departureDate', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('tripType', rdt ? 'roundTrip' : 'oneWay')
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('cabinClass', cabin)
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('oman') || ac === 'WY')
-    return res.redirect(302,
-      `https://www.omanair.com/en/book/flights` +
-      `?type=OW&from=${o}&to=${d}&date=${dt}&adults=1`)
+  // Oman Air
+  if (name.includes('oman') || ac === 'WY') {
+    const u = new URL('https://www.omanair.com/en/book/flights')
+    u.searchParams.set('type', rdt ? 'RT' : 'OW')
+    u.searchParams.set('from', o); u.searchParams.set('to', d)
+    u.searchParams.set('date', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('gulf air') || ac === 'GF')
-    return res.redirect(302,
-      `https://www.gulfair.com/book/flights` +
-      `?tripType=O&orig=${o}&dest=${d}&depDate=${dt}&adults=1`)
+  // Gulf Air
+  if (name.includes('gulf air') || ac === 'GF') {
+    const u = new URL('https://www.gulfair.com/book/flights')
+    u.searchParams.set('tripType', rdt ? 'R' : 'O')
+    u.searchParams.set('orig', o); u.searchParams.set('dest', d)
+    u.searchParams.set('depDate', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('indigo') || ac === '6E')
-    return res.redirect(302,
-      `https://www.goindigo.in/` +
-      `?from=${o}&to=${d}&date=${dt}&adults=1&tripType=O`)
+  // IndiGo
+  if (name.includes('indigo') || ac === '6E') {
+    const u = new URL('https://www.goindigo.in/')
+    u.searchParams.set('from', o); u.searchParams.set('to', d)
+    u.searchParams.set('date', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('tripType', rdt ? 'R' : 'O')
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('flydubai') || ac === 'FZ')
-    return res.redirect(302,
-      `https://www.flydubai.com/en/book/search-flights` +
-      `?from=${o}&to=${d}&date=${dt}&adults=1&tripType=OW`)
+  // FlyDubai
+  if (name.includes('flydubai') || ac === 'FZ') {
+    const u = new URL('https://www.flydubai.com/en/book/search-flights')
+    u.searchParams.set('from', o); u.searchParams.set('to', d)
+    u.searchParams.set('date', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('tripType', rdt ? 'RT' : 'OW')
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('spicejet') || ac === 'SG')
-    return res.redirect(302,
-      `https://www.spicejet.com/` +
-      `?src=${o}&dst=${d}&dd=${dt}&ad=1&tripType=O`)
+  // SpiceJet
+  if (name.includes('spicejet') || ac === 'SG') {
+    const u = new URL('https://www.spicejet.com/')
+    u.searchParams.set('src', o); u.searchParams.set('dst', d)
+    u.searchParams.set('dd', dt)
+    if (rdt) u.searchParams.set('rd', rdt)
+    u.searchParams.set('ad', String(pax))
+    u.searchParams.set('tripType', rdt ? 'R' : 'O')
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('westjet') || ac === 'WS')
-    return res.redirect(302,
-      `https://www.westjet.com/en-ca/flights/search` +
-      `?origin=${o}&destination=${d}&departDate=${dt}&adults=1&tripType=OW`)
+  // WestJet
+  if (name.includes('westjet') || ac === 'WS') {
+    const u = new URL('https://www.westjet.com/en-ca/flights/search')
+    u.searchParams.set('origin', o); u.searchParams.set('destination', d)
+    u.searchParams.set('departDate', dt)
+    if (rdt) u.searchParams.set('returnDate', rdt)
+    u.searchParams.set('adults', String(pax))
+    u.searchParams.set('tripType', rdt ? 'RT' : 'OW')
+    return res.redirect(302, u.toString())
+  }
 
-  if (name.includes('ana') || name.includes('all nippon') || ac === 'NH')
-    return res.redirect(302,
-      `https://www.ana.co.jp/en/ca/booking/reserve/roundTrip.do` +
-      `?oneWayOrRoundTrip=1&depAirportCD=${o}&arrAirportCD=${d}` +
-      `&depDate=${dt.replace(/-/g, '')}&adultNum=1`)
-
-  if (name.includes('sri lankan') || ac === 'UL')
-    return res.redirect(302,
-      `https://www.srilankan.com/en_uk/fly-with-us/book-a-flight` +
-      `?origin=${o}&destination=${d}&departureDate=${dt}&tripType=OW&adults=1`)
-
-  if (name.includes('oman air') || ac === 'WY')
-    return res.redirect(302,
-      `https://www.omanair.com/en/book/flights` +
-      `?type=OW&from=${o}&to=${d}&date=${dt}&adults=1`)
-
-  if (name.includes('duffel airways') || ac === 'ZZ')
-    // Test mode fake airline — go to Duffel homepage
-    return res.redirect(302, `https://duffel.com`)
-
-  // Final fallback — Google Flights with route + date
-  return res.redirect(302,
-    `https://www.google.com/travel/flights?hl=en&gl=ca&curr=CAD` +
-    `&q=Flights+from+${o}+to+${d}+on+${dt}`)
+  // ── FINAL FALLBACK: Google Flights ──────────────────────────────────────
+  // Build canonical Google Flights URL with all params
+  const params = new URLSearchParams({
+    hl: 'en', gl: 'ca', curr: 'CAD',
+    departure_id: o, arrival_id: d,
+    outbound_date: dt,
+    travel_class: cabin === 'first' ? '4' : cabin === 'business' ? '3' : cabin === 'premium_economy' ? '2' : '1',
+    adults: String(pax),
+    type: rdt ? '1' : '2',
+  })
+  if (rdt) params.set('return_date', rdt)
+  return res.redirect(302, `https://www.google.com/travel/flights?${params}`)
 }

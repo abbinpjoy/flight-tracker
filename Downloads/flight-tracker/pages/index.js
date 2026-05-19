@@ -308,29 +308,16 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
     const isSelected = isSelectedOut && (retDt ? isSelectedRet : true)
 
     function handleClick() {
-      // Build Google Flights URL from scratch using exact cell params only
-      // Never use cell.googleUrl — it may have wrong trip type or dates baked in
-      const pax = parseInt(passengers) || 1
-      const cabinMap = { economy: '1', premium_economy: '2', business: '3', first: '4' }
-      const cls = cabinMap[cabin] || '1'
-
-      // type=2 = one-way, type=1 = round-trip
-      const tripType = retDt ? '1' : '2'
-
+      // Route through /api/grid-book which does a live SerpAPI lookup
+      // to get the exact Google Flights URL for this date combo
       const params = new URLSearchParams({
-        hl:            'en',
-        gl:            'ca',
-        curr:          'CAD',
-        departure_id:  origin,
-        arrival_id:    destination,
-        outbound_date: outDt,
-        travel_class:  cls,
-        adults:        String(pax),
-        type:          tripType,
+        origin, destination,
+        date: outDt,
+        cabin,
+        passengers: String(passengers),
       })
-      if (retDt) params.set('return_date', retDt)
-
-      window.open(`https://www.google.com/travel/flights?${params}`, '_blank')
+      if (retDt) params.set('returnDate', retDt)
+      window.open(`/api/grid-book?${params}`, '_blank')
     }
 
     if (isEmpty) return (
@@ -519,9 +506,17 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
 
   function getBookUrl(f) {
     const params = new URLSearchParams({
-      source: f.source||'', offerId: f.offerId||'', googleUrl: f.googleFlightsUrl||'',
-      airline: f.airline||'', code: f.code||'', origin: origin.toUpperCase(),
-      destination: destination.toUpperCase(), date: depDate, cabin,
+      source:       f.source           || '',
+      offerId:      f.offerId          || '',
+      googleUrl:    f.googleFlightsUrl || '',
+      airline:      f.airline          || '',
+      code:         f.code             || '',
+      origin:       origin.toUpperCase(),
+      destination:  destination.toUpperCase(),
+      date:         depDate,
+      returnDate:   retDate || '',
+      cabin,
+      passengers:   String(passengers),
     })
     return `/api/book?${params.toString()}`
   }
