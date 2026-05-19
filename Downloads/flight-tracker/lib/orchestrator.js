@@ -39,6 +39,8 @@ function getCachedVI(key) {
 function setCachedVI(key, results) {
   viCache.set(key, { ts: Date.now(), results })
 }
+
+function raceTimeout(promise, ms, name) {
   return Promise.race([
     promise,
     new Promise((_, rej) =>
@@ -65,12 +67,13 @@ export async function orchestrateSearch({
   // Agent only fires when nothing else is configured
   const hasAgent        = !!apiKey && !hasSerpAPI && !hasKiwi && !hasDuffel && !hasTravelpayouts
 
-  log(`APIs — SerpAPI:${hasSerpAPI} Travelpayouts:${hasTravelpayouts} Duffel:${hasDuffel} VI:${hasVI}${cachedVI?' (cached)':''} Kiwi:${hasKiwi} Agent:${hasAgent}`)
+  log(`APIs — SerpAPI:${hasSerpAPI} Travelpayouts:${hasTravelpayouts} Duffel:${hasDuffel} VI:${hasVI} Kiwi:${hasKiwi} Agent:${hasAgent}`)
 
   const params = { origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins, maxLayoverMins }
 
   const viCacheKey = `${origin}-${destination}-${date}`
   const cachedVI   = getCachedVI(viCacheKey)
+  if (cachedVI) log('VI: serving from cache')
 
   // ── Fire ALL APIs simultaneously ──────────────────────────────────────
   const [rSerp, rKiwi, rDuffel, rTP, rVI, rAgent] = await Promise.allSettled([
