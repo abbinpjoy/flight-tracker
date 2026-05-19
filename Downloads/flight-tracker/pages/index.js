@@ -176,12 +176,16 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
   const [loadingMsg,  setLoadingMsg]  = useState('')
   const [error,       setError]       = useState('')
 
-  // 7 dates centred on a given date
+  // 7 dates centred on a given date — parse as local date to avoid UTC timezone shift
   function week(center) {
-    const base = new Date(center)
+    // Parse YYYY-MM-DD manually so no timezone conversion occurs
+    const [y, m, d] = center.split('-').map(Number)
     return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(base); d.setDate(d.getDate() + i - 3)
-      return d.toISOString().slice(0, 10)
+      const dt = new Date(y, m - 1, d + i - 3) // local date arithmetic
+      const yy = dt.getFullYear()
+      const mm = String(dt.getMonth() + 1).padStart(2, '0')
+      const dd = String(dt.getDate()).padStart(2, '0')
+      return `${yy}-${mm}-${dd}`
     })
   }
 
@@ -189,10 +193,12 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
   const inDates  = useMemo(() => retDate  ? week(retDate)  : [], [retDate])
 
   function fmt(dt) {
-    const d = new Date(dt)
+    // Parse YYYY-MM-DD as local date to avoid UTC midnight → local yesterday shift
+    const [y, m, d] = dt.split('-').map(Number)
+    const date = new Date(y, m - 1, d)
     return {
-      short: d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }),
-      day:   d.toLocaleDateString('en-CA', { weekday: 'short' }),
+      short: date.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' }),
+      day:   date.toLocaleDateString('en-CA', { weekday: 'short' }),
     }
   }
 
@@ -298,13 +304,50 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
   const thBase = { padding: '7px 8px', fontSize: 10, fontWeight: 700, borderBottom: '0.5px solid var(--border)', whiteSpace: 'nowrap', textAlign: 'center', minWidth: 82 }
 
   function PriceCell({ cell, outDt, retDt, minP, maxP, isSelectedOut, isSelectedRet }) {
-    if (!cell) return <td style={{ padding: '6px 8px', textAlign: 'center', background: 'transparent' }}><span style={{ color: 'var(--hint)' }}>—</span></td>
+    const isEmpty = !cell
+    const isSelected = isSelectedOut && (retDt ? isSelectedRet : true)
+
+    // Build Google Flights URL directly with all search params pre-filled
+    // This is more reliable than using stored googleUrl which came from a different search
+    function buildGoogleUrl() {
+      // Google Flights deep link format with tfs encoding is not stable,
+      // so we use the query string approach which always works
+      const base = 'https://www.google.com/travel/flights'
+      const pax  = parseInt(passengers) || 1
+      const cabinMap = { economy: '1', premium_economy: '2', business: '3', first: '4' }
+      const cls  = cabinMap[cabin] || '1'
+      // Use SerpAPI's own URL if we have it for the exact date, otherwise build one
+      if (cell?.googleUrl && cell.googleUrl.includes(outDt)) return cell.googleUrl
+      // Construct a Google Flights search URL
+      const q = retDt
+        ? `Flights from ${origin} to ${destination} ${outDt} return ${retDt}`
+        : `Flights from ${origin} to ${destination} ${outDt}`
+      return `${base}?hl=en&gl=ca&curr=CAD&q=${encodeURIComponent(q)}&adults=${pax}&cabin=${cls}`
+    }
+
+    function handleClick() {
+      const url = buildGoogleUrl()
+      window.open(url, '_blank')
+    }
+
+    if (isEmpty) return (
+      <td style={{ padding: '6px 8px', textAlign: 'center', background: 'transparent',
+        border: isSelected ? '2px solid rgba(110,231,183,0.7)' : '1px solid transparent' }}>
+        <span style={{ color: 'var(--hint)' }}>—</span>
+      </td>
+    )
+
     const isMin = cell.price === minP
-    const isSelected = isSelectedOut && (!retDt || isSelectedRet)
-    const url = new URLSearchParams({ source: 'serpapi_google_flights', googleUrl: cell.googleUrl || '', origin, destination, date: outDt, ...(retDt ? { returnDate: retDt } : {}), cabin, airline: cell.airline || '', code: cell.code || '' })
     return (
-      <td style={{ padding: '6px 8px', textAlign: 'center', background: cellBg(cell.price, minP, maxP), outline: isSelected ? '1.5px solid rgba(110,231,183,0.6)' : 'none', cursor: 'pointer' }}
-        onClick={() => window.open(`/api/book?${url}`, '_blank')}>
+      <td onClick={handleClick}
+        style={{ padding: '6px 8px', textAlign: 'center', cursor: 'pointer',
+          background: cellBg(cell.price, minP, maxP),
+          border: isSelected ? '2px solid rgba(110,231,183,0.8)' : '1px solid transparent',
+          position: 'relative' }}
+        title={`Click to view ${origin}→${destination} on ${outDt}${retDt ? ` returning ${retDt}` : ''} in Google Flights`}>
+        {isSelected && (
+          <div style={{ position: 'absolute', top: 2, right: 3, fontSize: 8, color: 'var(--accent)', fontWeight: 900, lineHeight: 1 }}>★</div>
+        )}
         <div style={{ fontSize: 12, fontWeight: 800, fontFamily: 'DM Mono,monospace', color: isMin ? 'var(--green)' : 'var(--text)' }}>
           ${cell.price.toLocaleString()}
         </div>
@@ -365,8 +408,8 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
                   const { short, day } = fmt(dt)
                   const isSel = dt === baseDate
                   return (
-                    <th key={dt} style={{ ...thBase, color: isSel ? 'var(--accent)' : 'var(--muted)', background: isSel ? 'rgba(110,231,183,0.06)' : 'transparent' }}>
-                      {isSel && <div style={{ fontSize: 8, color: 'var(--accent)', marginBottom: 1 }}>★</div>}
+                    <th key={dt} style={{ ...thBase, color: isSel ? 'var(--accent)' : 'var(--muted)', background: isSel ? 'rgba(110,231,183,0.10)' : 'transparent', borderBottom: isSel ? '2px solid var(--accent)' : '0.5px solid var(--border)' }}>
+                      <div style={{ fontSize: isSel ? 11 : 9, color: 'var(--accent)', marginBottom: 1, fontWeight: 900 }}>{isSel ? '★ selected' : ''}</div>
                       <div style={{ fontWeight: 800 }}>{short}</div>
                       <div style={{ fontSize: 9, color: 'var(--hint)' }}>{day}</div>
                     </th>
@@ -408,8 +451,8 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
                   const { short, day } = fmt(dt)
                   const isSel = dt === baseDate
                   return (
-                    <th key={dt} style={{ ...thBase, color: isSel ? 'var(--accent)' : 'var(--muted)', background: isSel ? 'rgba(110,231,183,0.06)' : 'transparent' }}>
-                      {isSel && <div style={{ fontSize: 8, color: 'var(--accent)', marginBottom: 1 }}>★</div>}
+                    <th key={dt} style={{ ...thBase, color: isSel ? 'var(--accent)' : 'var(--muted)', background: isSel ? 'rgba(110,231,183,0.10)' : 'transparent', borderBottom: isSel ? '2px solid var(--accent)' : '0.5px solid var(--border)' }}>
+                      <div style={{ fontSize: isSel ? 10 : 9, color: 'var(--accent)', marginBottom: 1, fontWeight: 900 }}>{isSel ? '★ out' : ''}</div>
                       <div style={{ fontWeight: 800, color: 'var(--accent)' }}>{short}</div>
                       <div style={{ fontSize: 9, color: 'var(--hint)' }}>{day}</div>
                     </th>
@@ -423,8 +466,8 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
                 const isSel = inDt === retDate
                 return (
                   <tr key={inDt} style={{ borderBottom: '0.5px solid var(--border)' }}>
-                    <td style={{ padding: '7px 10px', position: 'sticky', left: 0, background: isSel ? 'rgba(59,130,246,0.07)' : 'var(--surface)', borderRight: '0.5px solid var(--border)', textAlign: 'center', whiteSpace: 'nowrap' }}>
-                      {isSel && <div style={{ fontSize: 8, color: 'var(--blue)', marginBottom: 1 }}>★</div>}
+                    <td style={{ padding: '7px 10px', position: 'sticky', left: 0, background: isSel ? 'rgba(59,130,246,0.10)' : 'var(--surface)', borderRight: isSel ? '2px solid var(--blue)' : '0.5px solid var(--border)', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                      <div style={{ fontSize: isSel ? 10 : 9, color: 'var(--blue)', marginBottom: 1, fontWeight: 900 }}>{isSel ? '★ ret' : ''}</div>
                       <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--blue)' }}>{short}</div>
                       <div style={{ fontSize: 9, color: 'var(--hint)' }}>{day}</div>
                     </td>
