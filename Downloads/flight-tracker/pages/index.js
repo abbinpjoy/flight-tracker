@@ -643,7 +643,13 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
         </div>
         <div style={{ display:'flex', gap:6, alignItems:'center' }}>
           {meta?.sourceStats?.filter(s=>s.status==='ok').map(s=>(
-            <Badge key={s.name} color={s.name==='SerpAPI'?'green':s.name==='Duffel'?'blue':'amber'} small>{s.name} {s.count}</Badge>
+            <Badge key={s.name} color={
+              s.name==='SerpAPI'?'green':
+              s.name==='Duffel'?'blue':
+              s.name==='Travelpayouts'?'amber':
+              s.name==='VirtualInterline'?'purple':
+              'grey'
+            } small>{s.name} {s.count}</Badge>
           ))}
           {cheapest && <span style={{ fontSize:12, fontWeight:800, color:'var(--green)', fontFamily:'DM Mono,monospace' }}>from CA${cheapest.toLocaleString()}</span>}
           {!isTracking
@@ -687,32 +693,68 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                 const flashClass = flashMap[k]==='g'?'anim-flash-g':flashMap[k]==='r'?'anim-flash-r':''
                 return (
                   <div key={f.id||k} className={flashClass} onClick={()=>setExpandedFlight(isExp?null:(f.id||k))}
-                    style={{ ...card, padding:'12px 14px', cursor:'pointer', border:isBest?'0.5px solid rgba(34,197,94,0.3)':'0.5px solid var(--border)' }}>
+                    style={{ ...card, padding:'12px 14px', cursor:'pointer',
+                      border: f.isVirtualInterline ? '0.5px solid rgba(168,85,247,0.4)' : isBest?'0.5px solid rgba(34,197,94,0.3)':'0.5px solid var(--border)' }}>
                     <div style={{ display:'flex', gap:12, alignItems:'flex-start' }}>
-                      <div style={{ width:40, height:40, borderRadius:8, background:isBest?'var(--green-dim)':'var(--surface)', border:'0.5px solid var(--border-hi)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:isBest?'var(--green)':'var(--muted)', fontFamily:'DM Mono,monospace', flexShrink:0 }}>{f.code||'??'}</div>
+                      <div style={{ width:40, height:40, borderRadius:8, background: f.isVirtualInterline?'var(--purple-dim)':isBest?'var(--green-dim)':'var(--surface)', border:'0.5px solid var(--border-hi)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800, color:f.isVirtualInterline?'var(--purple)':isBest?'var(--green)':'var(--muted)', fontFamily:'DM Mono,monospace', flexShrink:0 }}>{f.code||'??'}</div>
                       <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline', gap:6 }}>
-                          <span style={{ fontSize:13, fontWeight:700, truncate:true }}>{f.airline}</span>
+                          <span style={{ fontSize:13, fontWeight:700 }}>{f.airline}</span>
                           <span style={{ fontSize:10, color:'var(--muted)', fontFamily:'DM Mono,monospace', flexShrink:0 }}>{f.flightNumber}</span>
                         </div>
                         <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:4, flexWrap:'wrap' }}>
                           <span style={{ fontSize:12, fontFamily:'DM Mono,monospace' }}>{f.departure} → {f.arrival}</span>
                           <span style={{ fontSize:10, color:'var(--muted)' }}>{f.duration}</span>
-                          {f.stops===0 ? <Badge color="green" small>Direct</Badge> : <Badge color="amber" small>{f.stops} stop{f.stops>1?'s':''}{f.via?` via ${f.via}`:''}</Badge>}
+                          {f.isVirtualInterline
+                            ? <Badge color="purple" small>⚡ Virtual Interline via {f.via}</Badge>
+                            : f.stops===0
+                              ? <Badge color="green" small>Direct</Badge>
+                              : <Badge color="amber" small>{f.stops} stop{f.stops>1?'s':''}{f.via?` via ${f.via}`:''}</Badge>
+                          }
+                          {f.source==='travelpayouts' && <Badge color="blue" small>Aviasales</Badge>}
                           {f.seatsLeft!==null && f.seatsLeft<=5 && <Badge color="red" small>⚡ {f.seatsLeft} left</Badge>}
                           <Sparkline data={history[k]} />
                         </div>
+                        {f.isVirtualInterline && f.note && (
+                          <div style={{ fontSize:10, color:'var(--purple)', marginTop:4, fontStyle:'italic' }}>{f.note}</div>
+                        )}
                       </div>
                       <div style={{ textAlign:'right', flexShrink:0 }}>
-                        {isBest && <div style={{ fontSize:9, fontWeight:800, color:'var(--green)', marginBottom:2 }}>★ Cheapest</div>}
+                        {isBest && !f.isVirtualInterline && <div style={{ fontSize:9, fontWeight:800, color:'var(--green)', marginBottom:2 }}>★ Cheapest</div>}
+                        {f.isVirtualInterline && (
+                          <div style={{ fontSize:9, fontWeight:800, color:'var(--purple)', marginBottom:2 }}>
+                            CA${f.leg1?.price?.toLocaleString()} + CA${f.leg2?.price?.toLocaleString()}
+                          </div>
+                        )}
                         <div style={{ fontSize:20, fontWeight:800, letterSpacing:'-.03em' }}>CA${f.price.toLocaleString()}</div>
                         <PriceDelta cur={f.price} prev={prev} />
                         <div style={{ fontSize:10, color:'var(--muted)', marginTop:2 }}>{cabin}</div>
-                        <div style={{ marginTop:6 }}>
-                          <a href={getBookUrl(f)} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
-                            style={{ padding:'4px 10px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
-                            {f.source==='serpapi_google_flights'?'🔍 Google Flights':`✈ Book ${f.airline?.split(' ')[0]||''}`}
-                          </a>
+                        <div style={{ marginTop:6, display:'flex', gap:4, flexWrap:'wrap', justifyContent:'flex-end' }}>
+                          {f.isVirtualInterline ? (
+                            // VI: two separate booking buttons
+                            <>
+                              <a href={f.leg1?.bookUrl || `/api/book?airline=${encodeURIComponent(f.leg1?.airline||'')}&code=${f.leg1?.code||''}&origin=${origin.toUpperCase()}&destination=${f.via||''}&date=${depDate}&cabin=${cabin}&passengers=${passengers}`}
+                                target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
+                                style={{ padding:'4px 8px', fontSize:10, fontWeight:700, background:'var(--purple-dim)', border:'0.5px solid rgba(168,85,247,.3)', borderRadius:6, color:'var(--purple)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
+                                ✈ Leg 1 ({f.leg1?.code||'?'})
+                              </a>
+                              <a href={f.leg2?.bookUrl || `/api/book?airline=${encodeURIComponent(f.leg2?.airline||'')}&code=${f.leg2?.code||''}&origin=${f.via||''}&destination=${destination.toUpperCase()}&date=${depDate}&cabin=${cabin}&passengers=${passengers}`}
+                                target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
+                                style={{ padding:'4px 8px', fontSize:10, fontWeight:700, background:'var(--purple-dim)', border:'0.5px solid rgba(168,85,247,.3)', borderRadius:6, color:'var(--purple)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
+                                ✈ Leg 2 ({f.leg2?.code||'?'})
+                              </a>
+                            </>
+                          ) : f.source==='travelpayouts' ? (
+                            <a href={f.aviasalesUrl||f.bookUrl||'#'} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
+                              style={{ padding:'4px 10px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
+                              🔍 View on Aviasales
+                            </a>
+                          ) : (
+                            <a href={getBookUrl(f)} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
+                              style={{ padding:'4px 10px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
+                              {f.source==='serpapi_google_flights'?'🔍 Google Flights':`✈ Book ${f.airline?.split(' ')[0]||''}`}
+                            </a>
+                          )}
                         </div>
                       </div>
                     </div>
