@@ -324,6 +324,7 @@ export default function FlightTracker() {
   const [minLayover,      setMinLayover]      = useState(60)
   const [maxLayover,      setMaxLayover]      = useState('')
   const [refreshSecs,     setRefreshSecs]     = useState(30)
+  // refreshSecs range: 15s – 21600s (6hrs)
   const [isTracking,      setIsTracking]      = useState(false)
   const [loading,         setLoading]         = useState(false)
   const [flights,         setFlights]         = useState([])
@@ -459,7 +460,8 @@ export default function FlightTracker() {
 
   const startTracking = useCallback(async () => {
     setIsTracking(true); setTickCount(0)
-    addLog('info', `Tracking ${origin} → ${destination} · min layover ${minLayover}min · refresh ${refreshSecs}s`)
+    const refreshLabel = refreshSecs < 60 ? `${refreshSecs}s` : refreshSecs < 3600 ? `${Math.round(refreshSecs/60)}m` : `${(refreshSecs/3600).toFixed(1).replace(/\.0$/,'')}h`
+    addLog('info', `Tracking ${origin} → ${destination} · min layover ${minLayover}min · refresh ${refreshLabel}`)
     await doFetch()
     setCountdown(refreshSecs)
     cdRef.current    = setInterval(() => setCountdown(c => c <= 1 ? refreshSecs : c - 1), 1000)
@@ -632,8 +634,14 @@ export default function FlightTracker() {
           <Divider />
           <SLabel>Live Refresh</SLabel>
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
-            <input type="range" min={15} max={120} step={5} value={refreshSecs} onChange={e=>setRefreshSecs(+e.target.value)} style={{ flex:1 }} />
-            <span style={{ fontFamily:'DM Mono,monospace', fontSize:13, color:'var(--accent)', minWidth:34 }}>{refreshSecs}s</span>
+            <input type="range" min={15} max={21600} step={15} value={refreshSecs} onChange={e=>setRefreshSecs(+e.target.value)} style={{ flex:1 }} />
+            <span style={{ fontFamily:'DM Mono,monospace', fontSize:13, color:'var(--accent)', minWidth:54 }}>
+              {refreshSecs < 60
+                ? `${refreshSecs}s`
+                : refreshSecs < 3600
+                  ? `${Math.round(refreshSecs/60)}m`
+                  : `${(refreshSecs/3600).toFixed(1).replace(/\.0$/,'')}h`}
+            </span>
           </div>
 
           {!isTracking
