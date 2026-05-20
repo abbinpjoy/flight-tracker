@@ -142,22 +142,78 @@ function Sparkline({ data }) {
   const stroke=last>prev?'var(--red)':last<prev?'var(--green)':'var(--muted)'
   return <div style={{ width:90, height:26 }}><ResponsiveContainer width="100%" height="100%"><LineChart data={pts}><Line type="monotone" dataKey="p" stroke={stroke} strokeWidth={1.5} dot={false}/><YAxis domain={[Math.min(...prices)*.997,Math.max(...prices)*1.003]} hide/><XAxis dataKey="i" hide/></LineChart></ResponsiveContainer></div>
 }
-function SegmentTimeline({ segments }) {
+function fmtMins(mins) {
+  if (!mins || mins <= 0) return '—'
+  const h = Math.floor(mins / 60), m = mins % 60
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
+function SegmentTimeline({ segments, durationMins, isVirtualInterline }) {
   if (!segments?.length) return null
+
+  // Compute total travel time including layovers
+  const totalFlightMins = segments.reduce((sum, s) => sum + (s.durationMins || 0), 0)
+  const totalLayoverMins = segments.reduce((sum, s) => sum + (s.layoverMins || 0), 0)
+  const totalMins = durationMins || (totalFlightMins + totalLayoverMins)
+
   return (
     <div style={{ marginTop:10, paddingTop:10, borderTop:'0.5px solid var(--border)' }}>
-      {segments.map((seg,i) => (
-        <div key={i} style={{ display:'flex', gap:10, alignItems:'flex-start', marginBottom:i<segments.length-1?6:0 }}>
-          <div style={{ width:36, fontSize:10, fontFamily:'DM Mono,monospace', color:'var(--accent)', flexShrink:0, paddingTop:2 }}>{seg.from}</div>
-          <div style={{ flex:1 }}>
-            <div style={{ display:'flex', justifyContent:'space-between', fontSize:11 }}>
-              <span style={{ fontWeight:700 }}>{seg.dep}</span>
-              <span style={{ color:'var(--muted)', fontSize:10 }}>{seg.airline} {seg.flight}</span>
-              <span style={{ fontWeight:700 }}>{seg.arr}</span>
+      {/* Total travel time header */}
+      {totalMins > 0 && (
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, padding:'5px 8px', background:'var(--surface)', borderRadius:6 }}>
+          <span style={{ fontSize:10, color:'var(--hint)', fontWeight:600 }}>TOTAL TRAVEL</span>
+          <span style={{ fontSize:12, fontWeight:800, fontFamily:'DM Mono,monospace', color:'var(--accent)' }}>{fmtMins(totalMins)}</span>
+          {totalLayoverMins > 0 && (
+            <span style={{ fontSize:10, color:'var(--muted)' }}>
+              {fmtMins(totalFlightMins)} flying · {fmtMins(totalLayoverMins)} transit
+            </span>
+          )}
+          {isVirtualInterline && <span style={{ fontSize:9, color:'var(--purple)', fontWeight:700 }}>SELF-TRANSFER</span>}
+        </div>
+      )}
+      {segments.map((seg, i) => (
+        <div key={i}>
+          {/* Segment row */}
+          <div style={{ display:'flex', gap:8, alignItems:'center', padding:'5px 0' }}>
+            {/* From */}
+            <div style={{ width:38, textAlign:'right', flexShrink:0 }}>
+              <div style={{ fontSize:11, fontFamily:'DM Mono,monospace', fontWeight:800, color:'var(--accent)' }}>{seg.from}</div>
+              <div style={{ fontSize:11, fontWeight:700 }}>{seg.dep}</div>
             </div>
-            {seg.layoverMins>0 && <div style={{ fontSize:10, color:'var(--amber)', marginTop:2, textAlign:'center' }}>↕ {Math.floor(seg.layoverMins/60)}h {seg.layoverMins%60}m at {seg.to}</div>}
+            {/* Flight line */}
+            <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+              <div style={{ fontSize:9, color:'var(--muted)', fontWeight:600 }}>{seg.airline} {seg.flight}</div>
+              <div style={{ width:'100%', height:'0.5px', background:'var(--border-hi)', position:'relative' }}>
+                <span style={{ position:'absolute', top:-4, left:'50%', transform:'translateX(-50%)', fontSize:9 }}>✈</span>
+              </div>
+              {seg.durationMins > 0 && (
+                <div style={{ fontSize:9, color:'var(--hint)' }}>{fmtMins(seg.durationMins)}</div>
+              )}
+            </div>
+            {/* To */}
+            <div style={{ width:38, textAlign:'left', flexShrink:0 }}>
+              <div style={{ fontSize:11, fontFamily:'DM Mono,monospace', fontWeight:800, color:'var(--accent)' }}>{seg.to}</div>
+              <div style={{ fontSize:11, fontWeight:700 }}>{seg.arr}</div>
+            </div>
           </div>
-          <div style={{ width:36, fontSize:10, fontFamily:'DM Mono,monospace', color:'var(--accent)', flexShrink:0, paddingTop:2, textAlign:'right' }}>{seg.to}</div>
+          {/* Layover bar between segments */}
+          {seg.layoverMins > 0 && (
+            <div style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 8px', margin:'2px 0', background:'rgba(245,158,11,0.08)', borderRadius:5, border:'0.5px solid rgba(245,158,11,0.2)' }}>
+              <span style={{ fontSize:10 }}>⏱</span>
+              <span style={{ fontSize:10, color:'var(--amber)', fontWeight:700 }}>
+                {fmtMins(seg.layoverMins)} layover at {seg.to}
+              </span>
+              {seg.layoverMins < 90 && <span style={{ fontSize:9, color:'var(--red)', fontWeight:700 }}>⚠ tight</span>}
+              {seg.layoverMins > 480 && <span style={{ fontSize:9, color:'var(--hint)' }}>long wait</span>}
+            </div>
+          )}
+          {/* Self-transfer marker for VI flights */}
+          {i === (segments.findIndex(s=>s.isLeg2Start)) - 1 && isVirtualInterline && (
+            <div style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 8px', margin:'4px 0', background:'rgba(168,85,247,0.08)', borderRadius:5, border:'0.5px solid rgba(168,85,247,0.3)' }}>
+              <span style={{ fontSize:10 }}>🔄</span>
+              <span style={{ fontSize:10, color:'var(--purple)', fontWeight:700 }}>Self-transfer — collect & recheck bags</span>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -504,21 +560,129 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
   const timerRef = useRef(null)
   const cdRef    = useRef(null)
 
+  // Build the most reliable booking URL for each flight.
+  // Strategy: use the source's own URL first (SerpAPI googleFlightsUrl),
+  // then airline-specific deep links with all params pre-filled.
+  // No server round-trip — all URLs built client-side for instant redirect.
   function getBookUrl(f) {
-    const params = new URLSearchParams({
-      source:       f.source           || '',
-      offerId:      f.offerId          || '',
-      googleUrl:    f.googleFlightsUrl || '',
-      airline:      f.airline          || '',
-      code:         f.code             || '',
-      origin:       origin.toUpperCase(),
-      destination:  destination.toUpperCase(),
-      date:         depDate,
-      returnDate:   retDate || '',
-      cabin,
-      passengers:   String(passengers),
-    })
-    return `/api/book?${params.toString()}`
+    const o   = origin.toUpperCase()
+    const d   = destination.toUpperCase()
+    const dt  = depDate
+    const rdt = retDate || ''
+    const pax = parseInt(passengers) || 1
+    const cabinMap = { economy:'1', premium_economy:'2', business:'3', first:'4' }
+    const cls = cabinMap[cabin] || '1'
+
+    // SerpAPI: use the exact Google Flights URL returned by the API
+    if (f.source==='serpapi_google_flights' && f.googleFlightsUrl) {
+      return f.googleFlightsUrl
+    }
+
+    // Travelpayouts: use Aviasales deep link
+    if (f.source==='travelpayouts' && f.aviasalesUrl) return f.aviasalesUrl
+
+    // Build Google Flights URL with all params — most reliable universal fallback
+    // type=1 round-trip, type=2 one-way
+    const gBase = 'https://www.google.com/travel/flights'
+    const gp = new URLSearchParams({ hl:'en', gl:'ca', curr:'CAD',
+      departure_id:o, arrival_id:d, outbound_date:dt,
+      travel_class:cls, adults:String(pax), type:rdt?'1':'2' })
+    if (rdt) gp.set('return_date', rdt)
+    const googleUrl = `${gBase}?${gp}`
+
+    const name = (f.airline||'').toLowerCase()
+    const ac   = (f.code||'').toUpperCase()
+
+    // Airline-specific deep links — all params pre-filled
+    if (name.includes('qatar') || ac==='QR') {
+      const p = new URLSearchParams({ bookingClass:cabin==='economy'?'E':cabin==='business'?'I':'F', tripType:rdt?'R':'O', from:o, to:d, departing:dt, adults:String(pax), flexibleDate:'off' })
+      if (rdt) p.set('returning', rdt)
+      return `https://www.qatarairways.com/en-ca/flights/find-flights.html?${p}`
+    }
+    if (name.includes('emirates') || ac==='EK') {
+      return `https://www.emirates.com/ca/english/book/flights/#/searchFlights?from=${o}&to=${d}&departureDate=${dt}${rdt?`&returnDate=${rdt}`:''}&adults=${pax}&cabinClass=${cabin==='premium_economy'?'premium_economy':cabin}&tripType=${rdt?'return':'oneway'}`
+    }
+    if (name.includes('etihad') || ac==='EY') {
+      const p = new URLSearchParams({ tripType:rdt?'RoundTrip':'OneWay', from:o, to:d, departureDate:dt, adults:String(pax), cabin })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.etihad.com/en-ca/book/flights?${p}`
+    }
+    if (name.includes('air india') || ac==='AI') {
+      const p = new URLSearchParams({ origin:o, destination:d, departDate:dt, adults:String(pax), class:cabin==='economy'?'E':cabin==='business'?'C':'F', tripType:rdt?'R':'O' })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.airindia.com/book-flights.htm?${p}`
+    }
+    if (name.includes('air canada') || ac==='AC') {
+      const hash = `search?org0=${o}&dest0=${d}&departDate0=${dt}&ADT=${pax}&lang=en-CA&tripType=${rdt?'R':'O'}&cabin=${cabin==='economy'?'lowest':cabin}${rdt?`&org1=${d}&dest1=${o}&departDate1=${rdt}`:''}`
+      return `https://www.aircanada.com/ca/en/aco/home.html#/${hash}`
+    }
+    if (name.includes('singapore') || ac==='SQ') {
+      const p = new URLSearchParams({ tripType:rdt?'R':'O', departureCity:o, arrivalCity:d, departureDate:dt, adults:String(pax), cabinClass:cabin==='economy'?'Y':'C' })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.singaporeair.com/en_UK/ppsb/travelshop/flight-search.form?${p}`
+    }
+    if (name.includes('lufthansa') || ac==='LH') {
+      const p = new URLSearchParams({ origin:o, destination:d, outboundDate:dt, adults:String(pax), cabinClass:cabin, tripType:rdt?'ROUND_TRIP':'ONE_WAY' })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.lufthansa.com/ca/en/flight-search?${p}`
+    }
+    if (name.includes('british airways') || ac==='BA') {
+      const p = new URLSearchParams({ from:o, to:d, depart:dt, class:cabin==='economy'?'M':'C', adult:String(pax) })
+      if (rdt) p.set('return', rdt)
+      return `https://www.britishairways.com/travel/book/public/en_ca?${p}`
+    }
+    if (name.includes('klm') || ac==='KL') {
+      const p = new URLSearchParams({ lang:'en', selectedJourney:rdt?'ROUND_TRIP':'ONE_WAY', origin:o, destination:d, outboundDate:dt, adults:String(pax), cabin })
+      if (rdt) p.set('inboundDate', rdt)
+      return `https://www.klm.com/travel/ca_en/apps/ebt/ebt_home.htm?${p}`
+    }
+    if (name.includes('turkish') || ac==='TK') {
+      const p = new URLSearchParams({ fromPort:o, toPort:d, tripType:rdt?'R':'O', departure:dt, adult:String(pax), cabin })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.turkishairlines.com/en-ca/flights/?${p}`
+    }
+    if (name.includes('cathay') || ac==='CX') {
+      const p = new URLSearchParams({ origin:o, destination:d, departureDate:dt, tripType:rdt?'roundTrip':'oneWay', adults:String(pax) })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.cathaypacific.com/cx/en_CA/book-a-trip/flights/overview.html?${p}`
+    }
+    if (name.includes('oman') || ac==='WY') {
+      const p = new URLSearchParams({ type:rdt?'RT':'OW', from:o, to:d, date:dt, adults:String(pax) })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.omanair.com/en/book/flights?${p}`
+    }
+    if (name.includes('gulf') || ac==='GF') {
+      const p = new URLSearchParams({ tripType:rdt?'R':'O', orig:o, dest:d, depDate:dt, adults:String(pax) })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.gulfair.com/book/flights?${p}`
+    }
+    if (name.includes('indigo') || ac==='6E') {
+      const p = new URLSearchParams({ from:o, to:d, date:dt, adults:String(pax), tripType:rdt?'R':'O' })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.goindigo.in/?${p}`
+    }
+    if (name.includes('flydubai') || ac==='FZ') {
+      const p = new URLSearchParams({ from:o, to:d, date:dt, adults:String(pax), tripType:rdt?'RT':'OW' })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.flydubai.com/en/book/search-flights?${p}`
+    }
+    if (name.includes('westjet') || ac==='WS') {
+      const p = new URLSearchParams({ origin:o, destination:d, departDate:dt, adults:String(pax), tripType:rdt?'RT':'OW' })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.westjet.com/en-ca/flights/search?${p}`
+    }
+    if (name.includes('air france') || ac==='AF') {
+      const segs = rdt ? `0::${o}:${d}:${dt},1::${d}:${o}:${rdt}` : `0::${o}:${d}:${dt}`
+      return `https://wwws.airfrance.ca/search/offers?pax=${pax}:0:0:0:0:0:0:0&cabin=${cabin==='economy'?'EC':'IC'}&tripType=${rdt?'ROUND_TRIP':'ONE_WAY'}&code=${rdt?'RT':'OW'}&segments=${segs}`
+    }
+    if (name.includes('sri lankan') || ac==='UL') {
+      const p = new URLSearchParams({ origin:o, destination:d, departureDate:dt, tripType:rdt?'RT':'OW', adults:String(pax) })
+      if (rdt) p.set('returnDate', rdt)
+      return `https://www.srilankan.com/en_uk/fly-with-us/book-a-flight?${p}`
+    }
+
+    // Universal fallback: Google Flights with all params
+    return googleUrl
   }
 
   const doFetch = useCallback(async () => {
@@ -564,17 +728,31 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
         const email = alertEmail
         for (const f of newFlights) {
           for (const a of alerts) {
-            const airlineMatch = !a.airline||a.airline==='any'||f.code===a.airline||(f.airline||'').toLowerCase().includes((a.airline||'').toLowerCase())
+            // For VI flights: use combined total price (already in f.price)
+            // For regular flights: use f.price directly
+            const priceToCheck = f.price  // f.price is always the total (leg1+leg2 for VI)
+            const airlineMatch = !a.airline||a.airline==='any'
+              ||f.code===a.airline
+              ||(f.airline||'').toLowerCase().includes((a.airline||'').toLowerCase())
+              // For VI: also match against either leg's airline
+              ||(f.isVirtualInterline && (
+                (f.leg1?.code===a.airline||f.leg2?.code===a.airline) ||
+                (f.leg1?.airline||'').toLowerCase().includes((a.airline||'').toLowerCase()) ||
+                (f.leg2?.airline||'').toLowerCase().includes((a.airline||'').toLowerCase())
+              ))
             if (!airlineMatch) continue
-            if (f.price<=0||f.price>a.threshold) continue
+            if (priceToCheck<=0||priceToCheck>a.threshold) continue
             const fireKey = `${id}-${a.id}-${f.code}-${f.stops}-${f.via||'direct'}`
             if (firedAlertsRef.current.has(fireKey)) continue
             firedAlertsRef.current.add(fireKey)
-            addLog('ok', `🔔 ALERT [${origin}→${destination}]: ${f.airline} CA$${f.price.toLocaleString()} ≤ CA$${a.threshold.toLocaleString()}`)
-            sendBrowserNotification(`✈ Price Drop! ${origin}→${destination}`, `${f.airline}: CA$${f.price.toLocaleString()}`)
+            const label = f.isVirtualInterline
+              ? `${f.leg1?.airline} + ${f.leg2?.airline} (via ${f.via})`
+              : f.airline
+            addLog('ok', `🔔 ALERT [${origin}→${destination}]: ${label} CA$${priceToCheck.toLocaleString()} ≤ CA$${a.threshold.toLocaleString()}${f.isVirtualInterline?' (combined)':''}`)
+            sendBrowserNotification(`✈ Price Drop! ${origin}→${destination}`, `${label}: CA$${priceToCheck.toLocaleString()}${f.isVirtualInterline?' combined':''}`)
             if (email) {
-              const bookUrl = f.bookUrl||`https://www.google.com/travel/flights?q=flights+${origin}+to+${destination}+${depDate}`
-              sendEmailAlert({ to:email, airline:f.airline, price:f.price, route:`${origin} → ${destination}`, date:depDate, bookUrl, threshold:a.threshold })
+              const bookUrl = f.bookUrl||f.leg1?.bookUrl||`https://www.google.com/travel/flights?q=flights+${origin}+to+${destination}+${depDate}`
+              sendEmailAlert({ to:email, airline:label, price:priceToCheck, route:`${origin} → ${destination}`, date:depDate, bookUrl, threshold:a.threshold })
                 .then(sent => { if (sent) addLog('ok',`📧 Email sent to ${email}`); else addLog('warn','📧 Email failed — check RESEND_API_KEY') })
             }
           }
@@ -709,13 +887,20 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                         </div>
                         <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:4, flexWrap:'wrap' }}>
                           <span style={{ fontSize:12, fontFamily:'DM Mono,monospace' }}>{f.departure} → {f.arrival}</span>
-                          <span style={{ fontSize:10, color:'var(--muted)' }}>{f.duration}</span>
+                          {/* Total travel time */}
+                          {f.durationMins > 0 && (
+                            <span style={{ fontSize:10, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>{fmtMins(f.durationMins)}</span>
+                          )}
                           {f.isVirtualInterline
-                            ? <Badge color="purple" small>⚡ Virtual Interline via {f.via}</Badge>
+                            ? <Badge color="purple" small>⚡ VI via {f.via}</Badge>
                             : f.stops===0
                               ? <Badge color="green" small>Direct</Badge>
                               : <Badge color="amber" small>{f.stops} stop{f.stops>1?'s':''}{f.via?` via ${f.via}`:''}</Badge>
                           }
+                          {/* Layover summary inline */}
+                          {!f.isVirtualInterline && f.minLayoverMins > 0 && f.stops > 0 && (
+                            <span style={{ fontSize:10, color:'var(--hint)' }}>⏱ {fmtMins(f.minLayoverMins)} layover</span>
+                          )}
                           {f.source==='travelpayouts' && <Badge color="blue" small>Aviasales</Badge>}
                           {f.seatsLeft!==null && f.seatsLeft<=5 && <Badge color="red" small>⚡ {f.seatsLeft} left</Badge>}
                           <Sparkline data={history[k]} />
@@ -736,17 +921,16 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                         <div style={{ fontSize:10, color:'var(--muted)', marginTop:2 }}>{cabin}</div>
                         <div style={{ marginTop:6, display:'flex', gap:4, flexWrap:'wrap', justifyContent:'flex-end' }}>
                           {f.isVirtualInterline ? (
-                            // VI: two separate booking buttons
                             <>
-                              <a href={f.leg1?.bookUrl || `/api/book?airline=${encodeURIComponent(f.leg1?.airline||'')}&code=${f.leg1?.code||''}&origin=${origin.toUpperCase()}&destination=${f.via||''}&date=${depDate}&cabin=${cabin}&passengers=${passengers}`}
+                              <a href={f.leg1?.bookUrl || getBookUrl({...f, airline:f.leg1?.airline, code:f.leg1?.code, source:'duffel', googleFlightsUrl:null, destination:f.via, retDate:''})}
                                 target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
                                 style={{ padding:'4px 8px', fontSize:10, fontWeight:700, background:'var(--purple-dim)', border:'0.5px solid rgba(168,85,247,.3)', borderRadius:6, color:'var(--purple)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
-                                ✈ Leg 1 ({f.leg1?.code||'?'})
+                                ✈ {f.leg1?.airline?.split(' ')[0]||'Leg 1'} ({f.leg1?.code||'?'}) {origin}→{f.via}
                               </a>
-                              <a href={f.leg2?.bookUrl || `/api/book?airline=${encodeURIComponent(f.leg2?.airline||'')}&code=${f.leg2?.code||''}&origin=${f.via||''}&destination=${destination.toUpperCase()}&date=${depDate}&cabin=${cabin}&passengers=${passengers}`}
+                              <a href={f.leg2?.bookUrl || getBookUrl({...f, airline:f.leg2?.airline, code:f.leg2?.code, source:'duffel', googleFlightsUrl:null, origin:f.via, destination, retDate:''})}
                                 target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
                                 style={{ padding:'4px 8px', fontSize:10, fontWeight:700, background:'var(--purple-dim)', border:'0.5px solid rgba(168,85,247,.3)', borderRadius:6, color:'var(--purple)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
-                                ✈ Leg 2 ({f.leg2?.code||'?'})
+                                ✈ {f.leg2?.airline?.split(' ')[0]||'Leg 2'} ({f.leg2?.code||'?'}) {f.via}→{destination}
                               </a>
                             </>
                           ) : f.source==='travelpayouts' ? (
@@ -763,7 +947,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                         </div>
                       </div>
                     </div>
-                    {isExp && <SegmentTimeline segments={f.segments} />}
+                    {isExp && <SegmentTimeline segments={f.segments} durationMins={f.durationMins} isVirtualInterline={f.isVirtualInterline} />}
                   </div>
                 )
               })
@@ -823,6 +1007,7 @@ export default function FlightTracker() {
   const [newCabin,     setNewCabin]     = useState('economy')
   const [newMaxStops,  setNewMaxStops]  = useState(2)
   const [newMinLayover,setNewMinLayover]= useState(60)
+  const [newPassengers,setNewPassengers]= useState('1')
 
   const logRef        = useRef(null)
   const firedAlerts   = useRef(new Set())
@@ -850,9 +1035,9 @@ export default function FlightTracker() {
   function addRoute() {
     if (!newDest||routes.length>=5) return
     const id = Date.now()
-    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:'1', minLayover:newMinLayover, maxStops:newMaxStops, refreshSecs:30 }
+    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:newPassengers, minLayover:newMinLayover, maxStops:newMaxStops, refreshSecs:30 }
     setRoutes(rs => [...rs, r]); setActiveRoute(id); setShowAddRoute(false)
-    setNewDest(''); setNewRetDate(''); setNewMaxStops(2); setNewMinLayover(60)
+    setNewDest(''); setNewRetDate(''); setNewMaxStops(2); setNewMinLayover(60); setNewPassengers('1')
     addLog('ok', `Route added: ${newOrigin} → ${newDest}`)
   }
 
@@ -919,31 +1104,45 @@ export default function FlightTracker() {
         </div>
       </header>
 
-      {/* Add route panel */}
+      {/* Add route panel — matches sidebar config layout */}
       {showAddRoute && (
-        <div style={{ background:'var(--surface)', borderBottom:'0.5px solid var(--border)', padding:'12px 1.5rem', display:'flex', gap:10, alignItems:'flex-end', flexWrap:'wrap' }}>
-          <div style={{ minWidth:140 }}><AirportInput label="From" value={newOrigin} onChange={setNewOrigin} /></div>
-          <div style={{ minWidth:140 }}><AirportInput label="To" value={newDest} onChange={setNewDest} /></div>
-          <div>
-            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Depart</div>
-            <input type="date" value={newDepDate} onChange={e=>setNewDepDate(e.target.value)} style={{ ...inputStyle, width:140 }} />
+        <div style={{ background:'var(--surface)', borderBottom:'0.5px solid var(--border)', padding:'16px 1.5rem' }}>
+          <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.09em', textTransform:'uppercase', color:'var(--hint)', marginBottom:12 }}>New Route</div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', gap:10, maxWidth:900 }}>
+            {/* From / To */}
+            <div><AirportInput label="From" value={newOrigin} onChange={setNewOrigin} /></div>
+            <div><AirportInput label="To" value={newDest} onChange={setNewDest} /></div>
+            {/* Dates */}
+            <div>
+              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Depart date</div>
+              <input type="date" value={newDepDate} onChange={e=>setNewDepDate(e.target.value)} style={{ ...inputStyle }} />
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Return date (optional)</div>
+              <input type="date" value={newRetDate} onChange={e=>setNewRetDate(e.target.value)} style={{ ...inputStyle }} />
+            </div>
+            {/* Cabin */}
+            <div>
+              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Cabin</div>
+              <select value={newCabin} onChange={e=>setNewCabin(e.target.value)} style={{ ...inputStyle }}>
+                {[['economy','Economy'],['premium_economy','Prem Economy'],['business','Business'],['first','First Class']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            {/* Passengers */}
+            <div>
+              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Passengers</div>
+              <select value={newPassengers||'1'} onChange={e=>setNewPassengers(e.target.value)} style={{ ...inputStyle }}>
+                {[1,2,3,4,5].map(n=><option key={n} value={n}>{n} passenger{n>1?'s':''}</option>)}
+              </select>
+            </div>
           </div>
-          <div>
-            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Return (optional)</div>
-            <input type="date" value={newRetDate} onChange={e=>setNewRetDate(e.target.value)} style={{ ...inputStyle, width:140 }} />
-          </div>
-          <div>
-            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Cabin</div>
-            <select value={newCabin} onChange={e=>setNewCabin(e.target.value)} style={{ ...inputStyle, width:120 }}>
-              {[['economy','Economy'],['premium_economy','Prem Eco'],['business','Business'],['first','First']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Max stops</div>
-            <div style={{ display:'flex', gap:4 }}>
-              {[['0','Direct'],['1','1'],['2','2'],['9','Any']].map(([v,l]) => (
+          {/* Max stops */}
+          <div style={{ marginTop:10 }}>
+            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:6 }}>Max stops</div>
+            <div style={{ display:'flex', gap:6 }}>
+              {[['0','Direct only'],['1','1 stop'],['2','2 stops'],['9','Any']].map(([v,l]) => (
                 <button key={v} onClick={()=>setNewMaxStops(+v)}
-                  style={{ padding:'4px 8px', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer', height:34,
+                  style={{ padding:'5px 12px', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer',
                     border:`0.5px solid ${newMaxStops===+v?'rgba(110,231,183,.5)':'var(--border)'}`,
                     background:newMaxStops===+v?'var(--accent-dim)':'var(--card)',
                     color:newMaxStops===+v?'var(--accent)':'var(--muted)' }}>
@@ -952,14 +1151,26 @@ export default function FlightTracker() {
               ))}
             </div>
           </div>
-          <div>
-            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Min layover</div>
-            <select value={newMinLayover} onChange={e=>setNewMinLayover(+e.target.value)} style={{ ...inputStyle, width:90 }}>
-              {[[0,'None'],[30,'30m'],[60,'1h'],[90,'1.5h'],[120,'2h'],[180,'3h'],[240,'4h']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
-            </select>
+          {/* Min layover */}
+          <div style={{ marginTop:10 }}>
+            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:6 }}>Min layover</div>
+            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+              {[[0,'None'],[30,'30m'],[60,'1h'],[90,'1.5h'],[120,'2h'],[180,'3h'],[240,'4h']].map(([v,l]) => (
+                <button key={v} onClick={()=>setNewMinLayover(+v)}
+                  style={{ padding:'5px 10px', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer',
+                    border:`0.5px solid ${newMinLayover===+v?'rgba(110,231,183,.5)':'var(--border)'}`,
+                    background:newMinLayover===+v?'var(--accent-dim)':'var(--card)',
+                    color:newMinLayover===+v?'var(--accent)':'var(--muted)' }}>
+                  {l}
+                </button>
+              ))}
+            </div>
           </div>
-          <button onClick={addRoute} style={{ ...primaryBtn, height:34, padding:'0 18px' }}>Add Route</button>
-          <button onClick={()=>setShowAddRoute(false)} style={{ ...ghostBtn, height:34, padding:'0 14px' }}>Cancel</button>
+          {/* Actions */}
+          <div style={{ display:'flex', gap:8, marginTop:14 }}>
+            <button onClick={addRoute} disabled={!newDest} style={{ ...primaryBtn, height:36, padding:'0 22px', opacity:!newDest?0.5:1 }}>+ Add Route</button>
+            <button onClick={()=>setShowAddRoute(false)} style={{ ...ghostBtn, height:36, padding:'0 16px' }}>Cancel</button>
+          </div>
         </div>
       )}
 
