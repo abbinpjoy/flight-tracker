@@ -151,69 +151,70 @@ function fmtMins(mins) {
 function SegmentTimeline({ segments, durationMins, isVirtualInterline }) {
   if (!segments?.length) return null
 
-  // Compute total travel time including layovers
-  const totalFlightMins = segments.reduce((sum, s) => sum + (s.durationMins || 0), 0)
-  const totalLayoverMins = segments.reduce((sum, s) => sum + (s.layoverMins || 0), 0)
-  const totalMins = durationMins || (totalFlightMins + totalLayoverMins)
+  // Total travel time comes from the top-level flight durationMins,
+  // which Duffel computes from UTC timestamps (timezone-correct).
+  // Never recompute from local dep/arr times — those are local timezone values.
+  const totalMins = durationMins || 0
 
   return (
     <div style={{ marginTop:10, paddingTop:10, borderTop:'0.5px solid var(--border)' }}>
       {/* Total travel time header */}
       {totalMins > 0 && (
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8, padding:'5px 8px', background:'var(--surface)', borderRadius:6 }}>
-          <span style={{ fontSize:10, color:'var(--hint)', fontWeight:600 }}>TOTAL TRAVEL</span>
-          <span style={{ fontSize:12, fontWeight:800, fontFamily:'DM Mono,monospace', color:'var(--accent)' }}>{fmtMins(totalMins)}</span>
-          {totalLayoverMins > 0 && (
-            <span style={{ fontSize:10, color:'var(--muted)' }}>
-              {fmtMins(totalFlightMins)} flying · {fmtMins(totalLayoverMins)} transit
-            </span>
-          )}
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, padding:'6px 10px', background:'var(--surface)', borderRadius:6 }}>
+          <span style={{ fontSize:10, color:'var(--hint)', fontWeight:700, letterSpacing:'.06em' }}>TOTAL TRAVEL TIME</span>
+          <span style={{ fontSize:13, fontWeight:800, fontFamily:'DM Mono,monospace', color:'var(--accent)' }}>{fmtMins(totalMins)}</span>
           {isVirtualInterline && <span style={{ fontSize:9, color:'var(--purple)', fontWeight:700 }}>SELF-TRANSFER</span>}
         </div>
       )}
       {segments.map((seg, i) => (
         <div key={i}>
-          {/* Segment row */}
-          <div style={{ display:'flex', gap:8, alignItems:'center', padding:'5px 0' }}>
-            {/* From */}
-            <div style={{ width:38, textAlign:'right', flexShrink:0 }}>
+          {/* ── Layover bar BEFORE this segment (if it's not the first) ── */}
+          {/* layoverMins on segment[i] = wait before this segment departs  */}
+          {seg.layoverMins > 0 && (
+            <div style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', margin:'4px 0', background:'rgba(245,158,11,0.08)', borderRadius:5, border:'0.5px solid rgba(245,158,11,0.2)' }}>
+              <span style={{ fontSize:11 }}>⏱</span>
+              <div style={{ flex:1 }}>
+                <span style={{ fontSize:10, color:'var(--amber)', fontWeight:700 }}>
+                  {fmtMins(seg.layoverMins)} layover at {seg.from}
+                </span>
+                {seg.layoverMins < 90 && <span style={{ fontSize:9, color:'var(--red)', fontWeight:700, marginLeft:6 }}>⚠ tight connection</span>}
+                {seg.layoverMins > 480 && <span style={{ fontSize:9, color:'var(--hint)', marginLeft:6 }}>long wait</span>}
+              </div>
+              {seg.dep && <span style={{ fontSize:9, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>departs {seg.dep}</span>}
+            </div>
+          )}
+          {/* Self-transfer marker between VI legs */}
+          {isVirtualInterline && seg.isLeg2Start && (
+            <div style={{ display:'flex', alignItems:'center', gap:8, padding:'5px 10px', margin:'4px 0', background:'rgba(168,85,247,0.08)', borderRadius:5, border:'0.5px solid rgba(168,85,247,0.3)' }}>
+              <span style={{ fontSize:11 }}>🔄</span>
+              <span style={{ fontSize:10, color:'var(--purple)', fontWeight:700 }}>Self-transfer — collect and recheck bags at {seg.from}</span>
+            </div>
+          )}
+          {/* ── Flight segment row ── */}
+          <div style={{ display:'flex', gap:8, alignItems:'center', padding:'6px 2px' }}>
+            {/* Origin */}
+            <div style={{ width:42, textAlign:'right', flexShrink:0 }}>
               <div style={{ fontSize:11, fontFamily:'DM Mono,monospace', fontWeight:800, color:'var(--accent)' }}>{seg.from}</div>
-              <div style={{ fontSize:11, fontWeight:700 }}>{seg.dep}</div>
+              <div style={{ fontSize:12, fontWeight:700 }}>{seg.dep}</div>
             </div>
             {/* Flight line */}
-            <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:2 }}>
+            <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', gap:1 }}>
               <div style={{ fontSize:9, color:'var(--muted)', fontWeight:600 }}>{seg.airline} {seg.flight}</div>
-              <div style={{ width:'100%', height:'0.5px', background:'var(--border-hi)', position:'relative' }}>
-                <span style={{ position:'absolute', top:-4, left:'50%', transform:'translateX(-50%)', fontSize:9 }}>✈</span>
+              <div style={{ width:'100%', display:'flex', alignItems:'center', gap:4 }}>
+                <div style={{ flex:1, height:'0.5px', background:'var(--border-hi)' }} />
+                <span style={{ fontSize:10 }}>✈</span>
+                <div style={{ flex:1, height:'0.5px', background:'var(--border-hi)' }} />
               </div>
               {seg.durationMins > 0 && (
-                <div style={{ fontSize:9, color:'var(--hint)' }}>{fmtMins(seg.durationMins)}</div>
+                <div style={{ fontSize:9, color:'var(--hint)', fontFamily:'DM Mono,monospace' }}>{fmtMins(seg.durationMins)}</div>
               )}
             </div>
-            {/* To */}
-            <div style={{ width:38, textAlign:'left', flexShrink:0 }}>
+            {/* Destination */}
+            <div style={{ width:42, textAlign:'left', flexShrink:0 }}>
               <div style={{ fontSize:11, fontFamily:'DM Mono,monospace', fontWeight:800, color:'var(--accent)' }}>{seg.to}</div>
-              <div style={{ fontSize:11, fontWeight:700 }}>{seg.arr}</div>
+              <div style={{ fontSize:12, fontWeight:700 }}>{seg.arr}</div>
             </div>
           </div>
-          {/* Layover bar between segments */}
-          {seg.layoverMins > 0 && (
-            <div style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 8px', margin:'2px 0', background:'rgba(245,158,11,0.08)', borderRadius:5, border:'0.5px solid rgba(245,158,11,0.2)' }}>
-              <span style={{ fontSize:10 }}>⏱</span>
-              <span style={{ fontSize:10, color:'var(--amber)', fontWeight:700 }}>
-                {fmtMins(seg.layoverMins)} layover at {seg.to}
-              </span>
-              {seg.layoverMins < 90 && <span style={{ fontSize:9, color:'var(--red)', fontWeight:700 }}>⚠ tight</span>}
-              {seg.layoverMins > 480 && <span style={{ fontSize:9, color:'var(--hint)' }}>long wait</span>}
-            </div>
-          )}
-          {/* Self-transfer marker for VI flights */}
-          {i === (segments.findIndex(s=>s.isLeg2Start)) - 1 && isVirtualInterline && (
-            <div style={{ display:'flex', alignItems:'center', gap:8, padding:'4px 8px', margin:'4px 0', background:'rgba(168,85,247,0.08)', borderRadius:5, border:'0.5px solid rgba(168,85,247,0.3)' }}>
-              <span style={{ fontSize:10 }}>🔄</span>
-              <span style={{ fontSize:10, color:'var(--purple)', fontWeight:700 }}>Self-transfer — collect & recheck bags</span>
-            </div>
-          )}
         </div>
       ))}
     </div>
