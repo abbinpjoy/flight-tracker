@@ -137,7 +137,10 @@ export class DuffelClient {
         }
         if (!layoverOk) continue
 
-        // Parse Duffel's ISO 8601 duration format — fallback only when timestamps unavailable
+        // Parse Duffel's ISO 8601 duration format (e.g. "PT16H30M")
+        // Duffel returns LOCAL times without timezone offsets, so we cannot
+        // subtract timestamps across different airport timezones.
+        // Use Duffel's pre-computed duration for per-segment values.
         function parseDur(d) {
           if (!d) return 0
           if (typeof d === 'number') return Math.round(d / 60)
@@ -146,23 +149,28 @@ export class DuffelClient {
           return (parseInt(m[1] || 0) * 60) + parseInt(m[2] || 0) + Math.round(parseInt(m[3] || 0) / 60)
         }
 
-        // Compute segment durations from UTC timestamps — always timezone-correct.
-        // Duffel's seg.duration / slice.duration can be off by 1h on routes crossing
-        // DST boundaries (e.g. Pacific routes). Timestamp subtraction is ground truth.
-        function segDurMins(seg) {
-          if (seg.departing_at && seg.arriving_at) {
-            const diff = Math.round(
-              (new Date(seg.arriving_at) - new Date(seg.departing_at)) / 60000
-            )
-            if (diff > 0) return diff
-          }
-          return parseDur(seg.duration)
-        }
+        // Segments — durationMins from Duffel's field (parseDur)
+        // Layovers from timestamp diff — correct since both timestamps are at
+        // the SAME airport (same timezone), so subtraction is always valid
+        const segs = segments.map((seg, i) => ({
+          from:        seg.origin?.iata_code      || seg.origin?.id      || '',
+          to:          seg.destination?.iata_code || seg.destination?.id || '',
+          dep:         seg.departing_at?.slice(11,16) || '',
+          arr:         seg.arriving_at?.slice(11,16)  || '',
+          airline:     seg.marketing_carrier?.name    || '',
+          flight:      `${seg.marketing_carrier?.iata_code || ''}${seg.marketing_carrier_flight_designation || ''}`,
+          durationMins: parseDur(seg.duration),
+          layoverMins: i > 0
+            ? Math.round((new Date(seg.departing_at) - new Date(segments[i-1].arriving_at)) / 60000)
+            : 0,
+        }))
 
-        // Total slice duration = first depart → last arrive (UTC)
-        const durMins = (first.departing_at && last.arriving_at)
-          ? Math.round((new Date(last.arriving_at) - new Date(first.departing_at)) / 60000)
-          : parseDur(slice.duration)
+        // Total = sum of all segment flight times + all layovers
+        // This is timezone-correct: each segment duration comes from Duffel's
+        // pre-computed value, and layovers are same-airport timestamp diffs
+        const segFlightMins  = segs.reduce((s, seg) => s + (seg.durationMins || 0), 0)
+        const segLayoverMins = segs.reduce((s, seg) => s + (seg.layoverMins  || 0), 0)
+        const durMins = segFlightMins + segLayoverMins || parseDur(slice.duration)
         const durStr  = durMins > 0 ? `${Math.floor(durMins/60)}h ${durMins%60}m` : '—'
 
         const via = stops > 0
@@ -174,25 +182,10 @@ export class DuffelClient {
         const rawPrice = parseFloat(offer.total_amount || 0)
         const rawCurr  = offer.total_currency || 'GBP'
 
-        // Convert to CAD if needed
         const rates    = { GBP:1.74, USD:1.37, EUR:1.48, AED:0.37, INR:0.016, SGD:1.01, AUD:0.89 }
         const price    = rawCurr === outputCurrency
           ? rawPrice
           : Math.round(rawPrice * (rates[rawCurr] || 1))
-
-        // Segments for timeline display — durationMins from timestamps, not Duffel's field
-        const segs = segments.map((seg, i) => ({
-          from:        seg.origin?.iata_code      || seg.origin?.id      || '',
-          to:          seg.destination?.iata_code || seg.destination?.id || '',
-          dep:         seg.departing_at?.slice(11,16) || '',
-          arr:         seg.arriving_at?.slice(11,16)  || '',
-          airline:     seg.marketing_carrier?.name    || '',
-          flight:      `${seg.marketing_carrier?.iata_code || ''}${seg.marketing_carrier_flight_designation || ''}`,
-          durationMins: segDurMins(seg),
-          layoverMins: i > 0
-            ? Math.round((new Date(seg.departing_at) - new Date(segments[i-1].arriving_at)) / 60000)
-            : 0,
-        }))
 
         results.push({
           id:            offer.id,
