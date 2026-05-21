@@ -704,12 +704,28 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
     setLoading(true)
     addLog('info', `[${origin}→${destination}] Tick #${tickCount+1} searching…`)
     try {
-      const now        = Date.now()
-      const skipDuffel = (now - globalLastDuffelCall) < DUFFEL_COOLDOWN
-      if (!skipDuffel) globalLastDuffelCall = now
-      else {
-        const secsLeft = Math.ceil((DUFFEL_COOLDOWN - (now - globalLastDuffelCall)) / 1000)
+      const now              = Date.now()
+      const isFirstFetch     = lastDuffelFlights.current.length === 0
+      const timeUntilFree    = DUFFEL_COOLDOWN - (now - globalLastDuffelCall)
+      const inCooldown       = timeUntilFree > 0
+
+      let skipDuffel = false
+
+      if (inCooldown && isFirstFetch) {
+        // New route with no cached Duffel data — wait for cooldown, then fetch
+        // (skipping would leave this route with no Duffel/VI results forever)
+        addLog('info', `[${origin}→${destination}] Duffel: waiting ${Math.ceil(timeUntilFree/1000)}s for rate limit…`)
+        await new Promise(r => setTimeout(r, timeUntilFree + 300))
+        globalLastDuffelCall = Date.now()
+        skipDuffel = false
+      } else if (inCooldown) {
+        // Existing route with cached results — skip and re-use cache
+        const secsLeft = Math.ceil(timeUntilFree / 1000)
         addLog('info', `[${origin}→${destination}] Duffel: cooldown — using cached results (${secsLeft}s)`)
+        skipDuffel = true
+      } else {
+        globalLastDuffelCall = Date.now()
+        skipDuffel = false
       }
 
       const res = await fetch('/api/search', {
@@ -1020,7 +1036,11 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                   </LineChart>
                 </ResponsiveContainer>
               </div>
-            : <div style={{ textAlign:'center', padding:'2rem', color:'var(--hint)', fontSize:13 }}>Chart appears after 2+ refresh ticks</div>
+            : <div style={{ textAlign:'center', padding:'2rem', color:'var(--hint)', fontSize:13 }}>
+                <div style={{ fontSize:28, marginBottom:8 }}>📈</div>
+                <div>Price trend appears after 2+ refresh ticks with results</div>
+                {!flights.length && <div style={{ fontSize:11, marginTop:6, color:'var(--hint)' }}>Start tracking to collect data</div>}
+              </div>
           }
         </>
       )}
