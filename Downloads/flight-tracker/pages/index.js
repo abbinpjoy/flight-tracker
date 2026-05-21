@@ -573,6 +573,8 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
   // Serverless functions are stateless so server-side cache doesn't work
   const lastDuffelCall    = useRef(0)
   const DUFFEL_COOLDOWN   = 90 * 1000  // 90 seconds between Duffel calls
+  // Preserve last Duffel + VI results so they survive cooldown ticks
+  const lastDuffelFlights = useRef([])
 
   // Build the most reliable booking URL for each flight.
   // Strategy: use the source's own URL first (SerpAPI googleFlightsUrl),
@@ -703,10 +705,13 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
     setLoading(true)
     addLog('info', `[${origin}→${destination}] Tick #${tickCount+1} searching…`)
     try {
-      const now         = Date.now()
-      const skipDuffel  = (now - lastDuffelCall.current) < DUFFEL_COOLDOWN
+      const now        = Date.now()
+      const skipDuffel = (now - lastDuffelCall.current) < DUFFEL_COOLDOWN
       if (!skipDuffel) lastDuffelCall.current = now
-      if (skipDuffel) addLog('info', `[${origin}→${destination}] Duffel: cooldown (next in ${Math.ceil((DUFFEL_COOLDOWN-(now-lastDuffelCall.current))/1000)}s)`)
+      else {
+        const secsLeft = Math.ceil((DUFFEL_COOLDOWN - (now - lastDuffelCall.current)) / 1000)
+        addLog('info', `[${origin}→${destination}] Duffel: cooldown — using cached results (${secsLeft}s)`)
+      }
 
       const res = await fetch('/api/search', {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -716,7 +721,27 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
       })
       const result = await res.json()
       if (!res.ok||result.error) throw new Error(result.error||`HTTP ${res.status}`)
-      const newFlights = (result.flights||[]).filter(f=>f.price>0).sort((a,b)=>(a.price||0)-(b.price||0))
+
+      // Fresh flights from this tick
+      let newFlights = (result.flights||[]).filter(f=>f.price>0)
+
+      if (skipDuffel && lastDuffelFlights.current.length > 0) {
+        // Re-inject preserved Duffel + VI flights from last full fetch
+        // so they don't disappear during cooldown ticks
+        const freshSources = new Set(newFlights.map(f => f.source))
+        const preserved = lastDuffelFlights.current.filter(f =>
+          !freshSources.has(f.source) // only add sources not in fresh results
+        )
+        newFlights = [...newFlights, ...preserved]
+        addLog('info', `[${origin}→${destination}] Merged ${preserved.length} cached Duffel/VI flights`)
+      } else if (!skipDuffel) {
+        // Full fetch — store Duffel + VI results for future cooldown ticks
+        lastDuffelFlights.current = newFlights.filter(f =>
+          f.source === 'duffel' || f.source === 'virtual_interline'
+        )
+      }
+
+      newFlights = newFlights.sort((a,b)=>(a.price||0)-(b.price||0))
 
       if (result.sourceStats?.length) {
         const activeCount = result.sourceStats.filter(s=>s.status==='ok').length
