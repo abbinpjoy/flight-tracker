@@ -888,20 +888,16 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                         </div>
                         <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:4, flexWrap:'wrap' }}>
                           <span style={{ fontSize:12, fontFamily:'DM Mono,monospace' }}>{f.departure} → {f.arrival}</span>
-                          {/* Total travel time */}
-                          {f.durationMins > 0 && (
-                            <span style={{ fontSize:10, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>{fmtMins(f.durationMins)}</span>
-                          )}
+                          {/* Total travel time — prefer durationMins (timezone-correct), fall back to duration string */}
+                          <span style={{ fontSize:10, fontWeight:700, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>
+                            {f.durationMins > 0 ? fmtMins(f.durationMins) : f.duration && f.duration !== '—' ? f.duration : ''}
+                          </span>
                           {f.isVirtualInterline
                             ? <Badge color="purple" small>⚡ VI via {f.via}</Badge>
                             : f.stops===0
                               ? <Badge color="green" small>Direct</Badge>
                               : <Badge color="amber" small>{f.stops} stop{f.stops>1?'s':''}{f.via?` via ${f.via}`:''}</Badge>
                           }
-                          {/* Layover summary inline */}
-                          {!f.isVirtualInterline && f.minLayoverMins > 0 && f.stops > 0 && (
-                            <span style={{ fontSize:10, color:'var(--hint)' }}>⏱ {fmtMins(f.minLayoverMins)} layover</span>
-                          )}
                           {f.source==='travelpayouts' && <Badge color="blue" small>Aviasales</Badge>}
                           {f.seatsLeft!==null && f.seatsLeft<=5 && <Badge color="red" small>⚡ {f.seatsLeft} left</Badge>}
                           <Sparkline data={history[k]} />
