@@ -549,6 +549,12 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
   )
 }
 
+// ── Global Duffel cooldown — shared across ALL route trackers ────────────
+// Each RouteTracker had its own ref, so multiple routes fired Duffel simultaneously.
+// Module-level variable ensures at most 1 Duffel call per DUFFEL_COOLDOWN window globally.
+let globalLastDuffelCall = 0
+const DUFFEL_COOLDOWN    = 90 * 1000  // 90s — Duffel free tier ~1 req/minute
+
 // ── Single route tracker ──────────────────────────────────────────────────
 function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlertsRef }) {
   const { id, origin, destination, depDate, retDate, cabin, passengers, minLayover, maxStops, refreshSecs } = route
@@ -569,10 +575,6 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
 
   const timerRef          = useRef(null)
   const cdRef             = useRef(null)
-  // Client-side Duffel throttle — Duffel free tier allows ~1 req/minute
-  // Serverless functions are stateless so server-side cache doesn't work
-  const lastDuffelCall    = useRef(0)
-  const DUFFEL_COOLDOWN   = 90 * 1000  // 90 seconds between Duffel calls
   // Preserve last Duffel + VI results so they survive cooldown ticks
   const lastDuffelFlights = useRef([])
 
@@ -703,10 +705,10 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
     addLog('info', `[${origin}→${destination}] Tick #${tickCount+1} searching…`)
     try {
       const now        = Date.now()
-      const skipDuffel = (now - lastDuffelCall.current) < DUFFEL_COOLDOWN
-      if (!skipDuffel) lastDuffelCall.current = now
+      const skipDuffel = (now - globalLastDuffelCall) < DUFFEL_COOLDOWN
+      if (!skipDuffel) globalLastDuffelCall = now
       else {
-        const secsLeft = Math.ceil((DUFFEL_COOLDOWN - (now - lastDuffelCall.current)) / 1000)
+        const secsLeft = Math.ceil((DUFFEL_COOLDOWN - (now - globalLastDuffelCall)) / 1000)
         addLog('info', `[${origin}→${destination}] Duffel: cooldown — using cached results (${secsLeft}s)`)
       }
 
@@ -1049,6 +1051,7 @@ export default function FlightTracker() {
   const [newMaxStops,  setNewMaxStops]  = useState(2)
   const [newMinLayover,setNewMinLayover]= useState(60)
   const [newPassengers,setNewPassengers]= useState('1')
+  const [newRefreshSecs,setNewRefreshSecs]= useState(30)
 
   const logRef        = useRef(null)
   const firedAlerts   = useRef(new Set())
@@ -1076,9 +1079,9 @@ export default function FlightTracker() {
   function addRoute() {
     if (!newDest||routes.length>=5) return
     const id = Date.now()
-    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:newPassengers, minLayover:newMinLayover, maxStops:newMaxStops, refreshSecs:30 }
+    const r = { id, origin:newOrigin, destination:newDest, depDate:newDepDate, retDate:newRetDate, cabin:newCabin, passengers:newPassengers, minLayover:newMinLayover, maxStops:newMaxStops, refreshSecs:newRefreshSecs }
     setRoutes(rs => [...rs, r]); setActiveRoute(id); setShowAddRoute(false)
-    setNewDest(''); setNewRetDate(''); setNewMaxStops(2); setNewMinLayover(60); setNewPassengers('1')
+    setNewDest(''); setNewRetDate(''); setNewMaxStops(2); setNewMinLayover(60); setNewPassengers('1'); setNewRefreshSecs(30)
     addLog('ok', `Route added: ${newOrigin} → ${newDest}`)
   }
 
@@ -1213,6 +1216,14 @@ export default function FlightTracker() {
                   <Field label={`Min layover: ${newMinLayover}min`}>
                     <input type="range" min={0} max={300} step={15} value={newMinLayover} onChange={e=>setNewMinLayover(+e.target.value)} style={{ width:'100%' }} />
                   </Field>
+                  <Divider />
+                  <SLabel>Live Refresh</SLabel>
+                  <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+                    <input type="range" min={15} max={21600} step={15} value={newRefreshSecs} onChange={e=>setNewRefreshSecs(+e.target.value)} style={{ flex:1 }} />
+                    <span style={{ fontFamily:'DM Mono,monospace', fontSize:13, color:'var(--accent)', minWidth:40 }}>
+                      {newRefreshSecs<60?`${newRefreshSecs}s`:newRefreshSecs<3600?`${Math.round(newRefreshSecs/60)}m`:`${(newRefreshSecs/3600).toFixed(1).replace(/\.0$/,'')}h`}
+                    </span>
+                  </div>
                   <Divider />
                   <div style={{ display:'flex', gap:8 }}>
                     <button onClick={addRoute} disabled={!newDest||!newOrigin||!newDepDate}
