@@ -112,10 +112,6 @@ export async function orchestrateSearch({
       : Promise.resolve(null),
   ])
 
-    hasAgent
-      ? raceTimeout(agentSearch({ ...params, apiKey }), T.agent, 'Agent')
-      : Promise.resolve(null),
-  ])
 
   log(`All APIs done in ${Date.now() - t0}ms`)
 
