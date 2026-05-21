@@ -1,12 +1,119 @@
 /**
- * Duffel API Client — fixed version
+ * Duffel API Client
  *
- * Fixes:
- * - cabin_class mapping (Duffel uses 'economy' | 'premium_economy' | 'business' | 'first')
- * - currency variable shadowing in normalizeOffers
- * - better error detail logging
- * - supplier_timeout reduced to avoid Duffel's own 15s limit
+ * Duffel returns LOCAL times without timezone offsets (e.g. "2026-12-14T00:05:00").
+ * To compute accurate durations we convert each local time to UTC using the airport's
+ * IANA timezone via Node.js Intl API (handles DST automatically, no external calls).
  */
+
+// ── Airport IANA timezone lookup ─────────────────────────────────────────────
+const AIRPORT_TZ = {
+  // Canada
+  YVR:'America/Vancouver', YYZ:'America/Toronto', YUL:'America/Toronto',
+  YYC:'America/Edmonton',  YEG:'America/Edmonton', YOW:'America/Toronto',
+  YHZ:'America/Halifax',   YWG:'America/Winnipeg',
+  // USA
+  LAX:'America/Los_Angeles', SFO:'America/Los_Angeles', SEA:'America/Los_Angeles',
+  PDX:'America/Los_Angeles', LAS:'America/Los_Angeles', PHX:'America/Phoenix',
+  JFK:'America/New_York',    EWR:'America/New_York',    BOS:'America/New_York',
+  MIA:'America/New_York',    ATL:'America/New_York',    IAD:'America/New_York',
+  ORD:'America/Chicago',     DFW:'America/Chicago',     MSP:'America/Chicago',
+  DEN:'America/Denver',
+  // UK & Ireland
+  LHR:'Europe/London', LGW:'Europe/London', MAN:'Europe/London',
+  DUB:'Europe/Dublin',
+  // Europe
+  CDG:'Europe/Paris',  ORY:'Europe/Paris',  AMS:'Europe/Amsterdam',
+  FRA:'Europe/Berlin', MUC:'Europe/Berlin', BER:'Europe/Berlin',
+  MAD:'Europe/Madrid', BCN:'Europe/Madrid', FCO:'Europe/Rome',
+  MXP:'Europe/Rome',   ZRH:'Europe/Zurich', VIE:'Europe/Vienna',
+  CPH:'Europe/Copenhagen', ARN:'Europe/Stockholm', HEL:'Europe/Helsinki',
+  // Middle East
+  DXB:'Asia/Dubai',    AUH:'Asia/Dubai',    DOH:'Asia/Qatar',
+  BAH:'Asia/Bahrain',  KWI:'Asia/Kuwait',   MCT:'Asia/Muscat',
+  AMM:'Asia/Amman',    BEY:'Asia/Beirut',   CAI:'Africa/Cairo',
+  IST:'Europe/Istanbul', SAW:'Europe/Istanbul',
+  // India
+  DEL:'Asia/Kolkata',  BOM:'Asia/Kolkata',  MAA:'Asia/Kolkata',
+  BLR:'Asia/Kolkata',  HYD:'Asia/Kolkata',  COK:'Asia/Kolkata',
+  CCJ:'Asia/Kolkata',  TRV:'Asia/Kolkata',  CCU:'Asia/Kolkata',
+  GOI:'Asia/Kolkata',  AMD:'Asia/Kolkata',  PNQ:'Asia/Kolkata',
+  JAI:'Asia/Kolkata',  IXE:'Asia/Kolkata',  IXC:'Asia/Kolkata',
+  // South/Southeast Asia
+  CMB:'Asia/Colombo',  KTM:'Asia/Kathmandu', DAC:'Asia/Dhaka',
+  KUL:'Asia/Kuala_Lumpur', SIN:'Asia/Singapore', BKK:'Asia/Bangkok',
+  CGK:'Asia/Jakarta',  DPS:'Asia/Makassar',
+  HAN:'Asia/Ho_Chi_Minh', SGN:'Asia/Ho_Chi_Minh',
+  RGN:'Asia/Rangoon',  PNH:'Asia/Phnom_Penh', VTE:'Asia/Vientiane',
+  // East Asia
+  HKG:'Asia/Hong_Kong', MNL:'Asia/Manila',
+  NRT:'Asia/Tokyo',  HND:'Asia/Tokyo',  KIX:'Asia/Tokyo',  CTS:'Asia/Tokyo',
+  ICN:'Asia/Seoul',  GMP:'Asia/Seoul',
+  PEK:'Asia/Shanghai', PVG:'Asia/Shanghai', CAN:'Asia/Shanghai',
+  CTU:'Asia/Shanghai', SZX:'Asia/Shanghai',
+  TPE:'Asia/Taipei',
+  // Australia & NZ
+  SYD:'Australia/Sydney',  MEL:'Australia/Melbourne', BNE:'Australia/Brisbane',
+  PER:'Australia/Perth',   ADL:'Australia/Adelaide',  AKL:'Pacific/Auckland',
+  // Africa
+  JNB:'Africa/Johannesburg', CPT:'Africa/Johannesburg',
+  NBO:'Africa/Nairobi',      ADD:'Africa/Addis_Ababa',
+  LOS:'Africa/Lagos',        ACC:'Africa/Accra',
+  CMN:'Africa/Casablanca',   TUN:'Africa/Tunis',
+}
+
+/**
+ * Convert a Duffel local datetime string (no timezone) to UTC Date
+ * using the airport's IANA timezone via Node.js Intl API.
+ * Handles DST automatically.
+ */
+function localToUTC(localStr, iataCode) {
+  if (!localStr) return null
+  const tz = AIRPORT_TZ[iataCode] || 'UTC'
+
+  // Treat the string as UTC first (naive date)
+  const naive = new Date(localStr.includes('Z') || localStr.match(/[+-]\d{2}:\d{2}$/)
+    ? localStr                 // already has offset info — use directly
+    : localStr + 'Z')         // no offset — treat as UTC initially
+
+  // If the timestamp already has timezone info, just return it directly
+  if (localStr.includes('Z') || localStr.match(/[+-]\d{2}:\d{2}$/)) {
+    return new Date(localStr)
+  }
+
+  // Get the UTC offset for this timezone at this approximate time using Intl
+  // Trick: format the naive-UTC date in both UTC and target timezone, measure difference
+  const utcStr = naive.toLocaleString('en-US', { timeZone: 'UTC' })
+  const tzStr  = naive.toLocaleString('en-US', { timeZone: tz })
+  const offsetMs = new Date(utcStr) - new Date(tzStr) // positive = behind UTC (e.g. PST = +8h)
+
+  // Real UTC = naive + offset
+  return new Date(naive.getTime() + offsetMs)
+}
+
+/**
+ * Compute flight segment duration in minutes using correct UTC conversion.
+ * Falls back to parseDur(seg.duration) if timestamps unavailable.
+ */
+function segmentDurMins(seg, originCode, destCode) {
+  if (seg.departing_at && seg.arriving_at) {
+    const depUTC = localToUTC(seg.departing_at, originCode)
+    const arrUTC = localToUTC(seg.arriving_at,  destCode)
+    if (depUTC && arrUTC) {
+      const diff = Math.round((arrUTC - depUTC) / 60000)
+      if (diff > 0 && diff < 30 * 60) return diff // sanity: < 30 hours
+    }
+  }
+  return parseDur(seg.duration)
+}
+
+function parseDur(d) {
+  if (!d) return 0
+  if (typeof d === 'number') return Math.round(d / 60)
+  const m = String(d).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
+  if (!m) return 0
+  return (parseInt(m[1] || 0) * 60) + parseInt(m[2] || 0) + Math.round(parseInt(m[3] || 0) / 60)
+}
 
 export class DuffelClient {
   constructor(accessToken) {
@@ -149,21 +256,24 @@ export class DuffelClient {
           return (parseInt(m[1] || 0) * 60) + parseInt(m[2] || 0) + Math.round(parseInt(m[3] || 0) / 60)
         }
 
-        // Segments — durationMins from Duffel's field (parseDur)
-        // Layovers from timestamp diff — correct since both timestamps are at
-        // the SAME airport (same timezone), so subtraction is always valid
-        const segs = segments.map((seg, i) => ({
-          from:        seg.origin?.iata_code      || seg.origin?.id      || '',
-          to:          seg.destination?.iata_code || seg.destination?.id || '',
-          dep:         seg.departing_at?.slice(11,16) || '',
-          arr:         seg.arriving_at?.slice(11,16)  || '',
-          airline:     seg.marketing_carrier?.name    || '',
-          flight:      `${seg.marketing_carrier?.iata_code || ''}${seg.marketing_carrier_flight_designation || ''}`,
-          durationMins: parseDur(seg.duration),
-          layoverMins: i > 0
-            ? Math.round((new Date(seg.departing_at) - new Date(segments[i-1].arriving_at)) / 60000)
-            : 0,
-        }))
+        // Segments — durationMins computed via UTC conversion using airport timezones
+        // Layovers from timestamp diff — valid because both timestamps are at same airport
+        const segs = segments.map((seg, i) => {
+          const fromCode = seg.origin?.iata_code      || seg.origin?.id      || ''
+          const toCode   = seg.destination?.iata_code || seg.destination?.id || ''
+          return {
+            from:        fromCode,
+            to:          toCode,
+            dep:         seg.departing_at?.slice(11,16) || '',
+            arr:         seg.arriving_at?.slice(11,16)  || '',
+            airline:     seg.marketing_carrier?.name    || '',
+            flight:      `${seg.marketing_carrier?.iata_code || ''}${seg.marketing_carrier_flight_designation || ''}`,
+            durationMins: segmentDurMins(seg, fromCode, toCode),
+            layoverMins: i > 0
+              ? Math.round((new Date(seg.departing_at) - new Date(segments[i-1].arriving_at)) / 60000)
+              : 0,
+          }
+        })
 
         // Total = sum of all segment flight times + all layovers
         // This is timezone-correct: each segment duration comes from Duffel's
