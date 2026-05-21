@@ -137,17 +137,32 @@ export class DuffelClient {
         }
         if (!layoverOk) continue
 
-        // Parse Duffel's ISO 8601 duration format (e.g. "PT16H30M", "PT1H5M", "PT45M")
-        // NOT seconds — the comment was wrong
+        // Parse Duffel's ISO 8601 duration format — fallback only when timestamps unavailable
         function parseDur(d) {
           if (!d) return 0
-          if (typeof d === 'number') return Math.round(d / 60) // handle if ever returns seconds
+          if (typeof d === 'number') return Math.round(d / 60)
           const m = String(d).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
           if (!m) return 0
           return (parseInt(m[1] || 0) * 60) + parseInt(m[2] || 0) + Math.round(parseInt(m[3] || 0) / 60)
         }
 
-        const durMins = parseDur(slice.duration)
+        // Compute segment durations from UTC timestamps — always timezone-correct.
+        // Duffel's seg.duration / slice.duration can be off by 1h on routes crossing
+        // DST boundaries (e.g. Pacific routes). Timestamp subtraction is ground truth.
+        function segDurMins(seg) {
+          if (seg.departing_at && seg.arriving_at) {
+            const diff = Math.round(
+              (new Date(seg.arriving_at) - new Date(seg.departing_at)) / 60000
+            )
+            if (diff > 0) return diff
+          }
+          return parseDur(seg.duration)
+        }
+
+        // Total slice duration = first depart → last arrive (UTC)
+        const durMins = (first.departing_at && last.arriving_at)
+          ? Math.round((new Date(last.arriving_at) - new Date(first.departing_at)) / 60000)
+          : parseDur(slice.duration)
         const durStr  = durMins > 0 ? `${Math.floor(durMins/60)}h ${durMins%60}m` : '—'
 
         const via = stops > 0
@@ -165,7 +180,7 @@ export class DuffelClient {
           ? rawPrice
           : Math.round(rawPrice * (rates[rawCurr] || 1))
 
-        // Segments for timeline display
+        // Segments for timeline display — durationMins from timestamps, not Duffel's field
         const segs = segments.map((seg, i) => ({
           from:        seg.origin?.iata_code      || seg.origin?.id      || '',
           to:          seg.destination?.iata_code || seg.destination?.id || '',
@@ -173,7 +188,7 @@ export class DuffelClient {
           arr:         seg.arriving_at?.slice(11,16)  || '',
           airline:     seg.marketing_carrier?.name    || '',
           flight:      `${seg.marketing_carrier?.iata_code || ''}${seg.marketing_carrier_flight_designation || ''}`,
-          durationMins: parseDur(seg.duration),
+          durationMins: segDurMins(seg),
           layoverMins: i > 0
             ? Math.round((new Date(seg.departing_at) - new Date(segments[i-1].arriving_at)) / 60000)
             : 0,
