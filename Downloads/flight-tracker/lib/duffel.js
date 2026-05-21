@@ -137,9 +137,18 @@ export class DuffelClient {
         }
         if (!layoverOk) continue
 
-        // Duration — Duffel returns seconds
-        const durMins = Math.round((slice.duration || 0) / 60)
-        const durStr  = `${Math.floor(durMins/60)}h ${durMins%60}m`
+        // Parse Duffel's ISO 8601 duration format (e.g. "PT16H30M", "PT1H5M", "PT45M")
+        // NOT seconds — the comment was wrong
+        function parseDur(d) {
+          if (!d) return 0
+          if (typeof d === 'number') return Math.round(d / 60) // handle if ever returns seconds
+          const m = String(d).match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/)
+          if (!m) return 0
+          return (parseInt(m[1] || 0) * 60) + parseInt(m[2] || 0) + Math.round(parseInt(m[3] || 0) / 60)
+        }
+
+        const durMins = parseDur(slice.duration)
+        const durStr  = durMins > 0 ? `${Math.floor(durMins/60)}h ${durMins%60}m` : '—'
 
         const via = stops > 0
           ? segments.slice(0,-1).map(s => s.destination?.iata_code || '').join('+')
@@ -164,7 +173,7 @@ export class DuffelClient {
           arr:         seg.arriving_at?.slice(11,16)  || '',
           airline:     seg.marketing_carrier?.name    || '',
           flight:      `${seg.marketing_carrier?.iata_code || ''}${seg.marketing_carrier_flight_designation || ''}`,
-          durationMins:Math.round((seg.duration || 0) / 60),
+          durationMins: parseDur(seg.duration),
           layoverMins: i > 0
             ? Math.round((new Date(seg.departing_at) - new Date(segments[i-1].arriving_at)) / 60000)
             : 0,

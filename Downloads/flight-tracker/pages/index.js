@@ -143,7 +143,7 @@ function Sparkline({ data }) {
   return <div style={{ width:90, height:26 }}><ResponsiveContainer width="100%" height="100%"><LineChart data={pts}><Line type="monotone" dataKey="p" stroke={stroke} strokeWidth={1.5} dot={false}/><YAxis domain={[Math.min(...prices)*.997,Math.max(...prices)*1.003]} hide/><XAxis dataKey="i" hide/></LineChart></ResponsiveContainer></div>
 }
 function fmtMins(mins) {
-  if (!mins || mins <= 0) return '—'
+  if (!mins || mins <= 0 || isNaN(mins)) return '—'
   const h = Math.floor(mins / 60), m = mins % 60
   return m > 0 ? `${h}h ${m}m` : `${h}h`
 }
@@ -890,7 +890,9 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                           <span style={{ fontSize:12, fontFamily:'DM Mono,monospace' }}>{f.departure} → {f.arrival}</span>
                           {/* Total travel time — prefer durationMins (timezone-correct), fall back to duration string */}
                           <span style={{ fontSize:10, fontWeight:700, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>
-                            {f.durationMins > 0 ? fmtMins(f.durationMins) : f.duration && f.duration !== '—' ? f.duration : ''}
+                            {f.durationMins > 0 ? fmtMins(f.durationMins)
+                              : f.duration && f.duration !== '—' && !f.duration.includes('NaN') ? f.duration
+                              : ''}
                           </span>
                           {f.isVirtualInterline
                             ? <Badge color="purple" small>⚡ VI via {f.via}</Badge>
