@@ -151,21 +151,30 @@ function fmtMins(mins) {
 function SegmentTimeline({ segments, durationMins, isVirtualInterline }) {
   if (!segments?.length) return null
 
-  // Total travel time comes from the top-level flight durationMins,
-  // which Duffel computes from UTC timestamps (timezone-correct).
-  // Never recompute from local dep/arr times — those are local timezone values.
-  const totalMins = durationMins || 0
+  // Total = top-level durationMins (from Duffel, timezone-correct ISO 8601 parsed)
+  // Fallback: sum segment durations + layovers (all timezone-correct values from API)
+  const segFlightMins  = segments.reduce((s, seg) => s + (seg.durationMins  || 0), 0)
+  const segLayoverMins = segments.reduce((s, seg) => s + (seg.layoverMins   || 0), 0)
+  const totalMins      = (durationMins > 0 && !isNaN(durationMins))
+    ? durationMins
+    : segFlightMins + segLayoverMins
 
   return (
     <div style={{ marginTop:10, paddingTop:10, borderTop:'0.5px solid var(--border)' }}>
-      {/* Total travel time header */}
-      {totalMins > 0 && (
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, padding:'6px 10px', background:'var(--surface)', borderRadius:6 }}>
-          <span style={{ fontSize:10, color:'var(--hint)', fontWeight:700, letterSpacing:'.06em' }}>TOTAL TRAVEL TIME</span>
-          <span style={{ fontSize:13, fontWeight:800, fontFamily:'DM Mono,monospace', color:'var(--accent)' }}>{fmtMins(totalMins)}</span>
-          {isVirtualInterline && <span style={{ fontSize:9, color:'var(--purple)', fontWeight:700 }}>SELF-TRANSFER</span>}
+      {/* Total travel time — always shown prominently */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10, padding:'8px 12px', background:'rgba(110,231,183,0.06)', border:'0.5px solid rgba(110,231,183,0.15)', borderRadius:7 }}>
+        <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+          <span style={{ fontSize:9, color:'var(--hint)', fontWeight:700, letterSpacing:'.08em' }}>TOTAL TRAVEL TIME</span>
+          <span style={{ fontSize:16, fontWeight:800, fontFamily:'DM Mono,monospace', color:'var(--accent)' }}>
+            {totalMins > 0 ? fmtMins(totalMins) : '—'}
+          </span>
         </div>
-      )}
+        <div style={{ textAlign:'right', fontSize:10, color:'var(--muted)', lineHeight:1.7 }}>
+          {segFlightMins > 0 && <div>✈ {fmtMins(segFlightMins)} flying</div>}
+          {segLayoverMins > 0 && <div>⏱ {fmtMins(segLayoverMins)} transit</div>}
+          {isVirtualInterline && <div style={{ color:'var(--purple)', fontWeight:700 }}>SELF-TRANSFER</div>}
+        </div>
+      </div>
       {segments.map((seg, i) => (
         <div key={i}>
           {/* ── Layover bar BEFORE this segment (if it's not the first) ── */}
@@ -888,12 +897,14 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                         </div>
                         <div style={{ display:'flex', gap:6, alignItems:'center', marginTop:4, flexWrap:'wrap' }}>
                           <span style={{ fontSize:12, fontFamily:'DM Mono,monospace' }}>{f.departure} → {f.arrival}</span>
-                          {/* Total travel time — prefer durationMins (timezone-correct), fall back to duration string */}
-                          <span style={{ fontSize:10, fontWeight:700, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>
-                            {f.durationMins > 0 ? fmtMins(f.durationMins)
-                              : f.duration && f.duration !== '—' && !f.duration.includes('NaN') ? f.duration
-                              : ''}
-                          </span>
+                          {/* Total travel time — compute from segments if top-level missing */}
+                          {(() => {
+                            const dm = f.durationMins > 0 && !isNaN(f.durationMins) ? f.durationMins
+                              : (f.segments||[]).reduce((s,seg)=>(s+(seg.durationMins||0)+(seg.layoverMins||0)),0)
+                            const str = dm > 0 ? fmtMins(dm)
+                              : f.duration && f.duration !== '—' && !f.duration.includes('NaN') ? f.duration : null
+                            return str ? <span style={{ fontSize:10, fontWeight:700, color:'var(--muted)', fontFamily:'DM Mono,monospace' }}>{str}</span> : null
+                          })()}
                           {f.isVirtualInterline
                             ? <Badge color="purple" small>⚡ VI via {f.via}</Badge>
                             : f.stops===0
