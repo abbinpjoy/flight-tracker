@@ -24,37 +24,19 @@ const T = {
   agent:     22000,
 }
 
-// Cache Duffel main search — re-run at most every 2 minutes
-// Duffel's free tier rate limit is ~1 offer_request per minute
-const duffelCache = new Map()
-const DUFFEL_CACHE_TTL = 2 * 60 * 1000 // 2 minutes
-
-function getCachedDuffel(key) {
-  const entry = duffelCache.get(key)
-  if (!entry) return null
-  if (Date.now() - entry.ts > DUFFEL_CACHE_TTL) { duffelCache.delete(key); return null }
-  return entry.results
-}
-
-function setCachedDuffel(key, results) {
-  duffelCache.set(key, { ts: Date.now(), results })
-}
-
-// Cache VI results per route — re-run at most every 5 minutes
-// This prevents VI from hammering Duffel on every 30s refresh tick
-const viCache = new Map() // key: `${origin}-${destination}-${date}` → { ts, results }
-const VI_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+// Cache was here but serverless functions are stateless — removed.
+// Duffel rate limiting is now handled client-side via lastDuffelCall ref.
+// VI cache kept for warm-process reuse (may help on Vercel if same instance reused).
+const viCache    = new Map()
+const VI_CACHE_TTL = 5 * 60 * 1000
 
 function getCachedVI(key) {
-  const entry = viCache.get(key)
-  if (!entry) return null
-  if (Date.now() - entry.ts > VI_CACHE_TTL) { viCache.delete(key); return null }
-  return entry.results
+  const e = viCache.get(key)
+  if (!e) return null
+  if (Date.now() - e.ts > VI_CACHE_TTL) { viCache.delete(key); return null }
+  return e.results
 }
-
-function setCachedVI(key, results) {
-  viCache.set(key, { ts: Date.now(), results })
-}
+function setCachedVI(key, r) { viCache.set(key, { ts: Date.now(), results: r }) }
 
 function raceTimeout(promise, ms, name) {
   return Promise.race([
@@ -70,6 +52,8 @@ export async function orchestrateSearch({
   cabin, passengers,
   minLayoverMins = 60, maxLayoverMins = null,
   currency = 'CAD', apiKey,
+  skipDuffel = false,
+  skipVI     = false,
 }) {
   const log = (...a) => console.log(`[orch ${origin}→${destination}]`, ...a)
   const t0  = Date.now()
@@ -78,21 +62,15 @@ export async function orchestrateSearch({
   const hasKiwi         = !!(process.env.KIWI_API_KEY?.length > 5)
   const hasDuffel       = !!(process.env.DUFFEL_ACCESS_TOKEN?.length > 10)
   const hasTravelpayouts = !!(process.env.TRAVELPAYOUTS_TOKEN?.length > 5)
-  // Virtual interline uses Duffel — only run if Duffel is configured
-  const hasVI           = hasDuffel
-  // Agent only fires when nothing else is configured
+  const hasVI           = hasDuffel && !skipVI
   const hasAgent        = !!apiKey && !hasSerpAPI && !hasKiwi && !hasDuffel && !hasTravelpayouts
 
-  log(`APIs — SerpAPI:${hasSerpAPI} Travelpayouts:${hasTravelpayouts} Duffel:${hasDuffel} VI:${hasVI} Kiwi:${hasKiwi} Agent:${hasAgent}`)
+  log(`APIs — SerpAPI:${hasSerpAPI} TP:${hasTravelpayouts} Duffel:${hasDuffel}${skipDuffel?'(skip)':''} VI:${hasVI}${skipVI?'(skip)':''} Kiwi:${hasKiwi} Agent:${hasAgent}`)
 
-  const params = { origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins, maxLayoverMins }
-
-  const cacheKey     = `${origin}-${destination}-${date}-${cabin}-${passengers}`
-  const viCacheKey   = `${origin}-${destination}-${date}`
-  const cachedVI     = getCachedVI(viCacheKey)
-  const cachedDuffel = getCachedDuffel(cacheKey)
-  if (cachedVI)     log('VI: from cache (5min TTL)')
-  if (cachedDuffel) log('Duffel: from cache (2min TTL)')
+  const params     = { origin, destination, date, returnDate, cabin, passengers, currency, minLayoverMins, maxLayoverMins }
+  const viCacheKey = `${origin}-${destination}-${date}`
+  const cachedVI   = getCachedVI(viCacheKey)
+  if (cachedVI) log('VI: warm cache hit')
 
   // ── Fire ALL APIs simultaneously ──────────────────────────────────────
   const [rSerp, rKiwi, rDuffel, rTP, rVI, rAgent] = await Promise.allSettled([
@@ -104,31 +82,35 @@ export async function orchestrateSearch({
       ? raceTimeout(searchKiwi(params), T.kiwi, 'Kiwi')
       : Promise.resolve(null),
 
-    hasDuffel
-      ? cachedDuffel
-        ? Promise.resolve(cachedDuffel)
-        : raceTimeout(
-            new DuffelClient(process.env.DUFFEL_ACCESS_TOKEN).searchOffers({
-              origin, destination, departureDate: date, returnDate,
-              adults: parseInt(passengers), cabinClass: cabin,
-              minLayoverMins, maxLayoverMins, currency,
-            }).then(r => { if (r) setCachedDuffel(cacheKey, r); return r }),
-            T.duffel, 'Duffel')
+    // skipDuffel = client says "within cooldown window, don't call Duffel"
+    hasDuffel && !skipDuffel
+      ? raceTimeout(
+          new DuffelClient(process.env.DUFFEL_ACCESS_TOKEN).searchOffers({
+            origin, destination, departureDate: date, returnDate,
+            adults: parseInt(passengers), cabinClass: cabin,
+            minLayoverMins, maxLayoverMins, currency,
+          }), T.duffel, 'Duffel')
       : Promise.resolve(null),
 
     hasTravelpayouts
       ? raceTimeout(searchTravelpayouts(params), T.travelpayouts, 'Travelpayouts')
       : Promise.resolve(null),
 
+    // skipVI = true when skipDuffel is true (VI uses Duffel internally)
     hasVI
       ? cachedVI
         ? Promise.resolve(cachedVI)
         : raceTimeout(
-            new Promise(resolve => setTimeout(resolve, 2000))
+            new Promise(r => setTimeout(r, 2000))
               .then(() => searchVirtualInterline({ origin, destination, date, cabin, passengers, minLayoverMins, currency }))
               .then(results => { if (results) setCachedVI(viCacheKey, results); return results }),
             T.virtualinterline, 'VirtualInterline')
       : Promise.resolve(null),
+
+    hasAgent
+      ? raceTimeout(agentSearch({ ...params, apiKey }), T.agent, 'Agent')
+      : Promise.resolve(null),
+  ])
 
     hasAgent
       ? raceTimeout(agentSearch({ ...params, apiKey }), T.agent, 'Agent')

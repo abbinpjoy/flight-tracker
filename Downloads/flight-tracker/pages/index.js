@@ -567,8 +567,12 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
   const [expandedFlight, setExpandedFlight] = useState(null)
   const [flashMap,   setFlashMap]   = useState({})
 
-  const timerRef = useRef(null)
-  const cdRef    = useRef(null)
+  const timerRef          = useRef(null)
+  const cdRef             = useRef(null)
+  // Client-side Duffel throttle — Duffel free tier allows ~1 req/minute
+  // Serverless functions are stateless so server-side cache doesn't work
+  const lastDuffelCall    = useRef(0)
+  const DUFFEL_COOLDOWN   = 90 * 1000  // 90 seconds between Duffel calls
 
   // Build the most reliable booking URL for each flight.
   // Strategy: use the source's own URL first (SerpAPI googleFlightsUrl),
@@ -699,11 +703,16 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
     setLoading(true)
     addLog('info', `[${origin}→${destination}] Tick #${tickCount+1} searching…`)
     try {
+      const now         = Date.now()
+      const skipDuffel  = (now - lastDuffelCall.current) < DUFFEL_COOLDOWN
+      if (!skipDuffel) lastDuffelCall.current = now
+      if (skipDuffel) addLog('info', `[${origin}→${destination}] Duffel: cooldown (next in ${Math.ceil((DUFFEL_COOLDOWN-(now-lastDuffelCall.current))/1000)}s)`)
+
       const res = await fetch('/api/search', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ origin, destination, date:depDate, returnDate:retDate||null,
           cabin, passengers:parseInt(passengers)||1, minLayoverMins:parseInt(minLayover)||60,
-          maxLayoverMins:null, currency:'CAD' }),
+          maxLayoverMins:null, currency:'CAD', skipDuffel, skipVI: skipDuffel }),
       })
       const result = await res.json()
       if (!res.ok||result.error) throw new Error(result.error||`HTTP ${res.status}`)

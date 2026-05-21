@@ -1,8 +1,8 @@
 /**
  * /api/search
- * Delegates to orchestrator — runs SerpAPI + Kiwi + Duffel in parallel.
- * Claude Agent (ANTHROPIC_API_KEY) is only used as fallback when NO other
- * flight APIs are configured. If you have SerpAPI + Duffel, you don't need it.
+ * Delegates to orchestrator — runs all configured APIs in parallel.
+ * skipDuffel / skipVI flags come from the client-side cooldown tracker
+ * (serverless functions are stateless so server-side caching doesn't work).
  */
 import { orchestrateSearch } from '../../lib/orchestrator.js'
 
@@ -14,6 +14,8 @@ export default async function handler(req, res) {
     cabin = 'economy', passengers = 1,
     minLayoverMins = 60, maxLayoverMins = null,
     currency = 'CAD',
+    skipDuffel = false,
+    skipVI     = false,
   } = req.body
 
   if (!origin || !destination || !date) {
@@ -24,9 +26,6 @@ export default async function handler(req, res) {
   const hasKiwi    = !!(process.env.KIWI_API_KEY?.length > 5)
   const hasDuffel  = !!(process.env.DUFFEL_ACCESS_TOKEN?.length > 10)
   const hasOtherAPIs = hasSerpAPI || hasKiwi || hasDuffel
-
-  // Only pass Anthropic key if no flight APIs are configured
-  // This prevents unnecessary token usage and rate limit errors
   const apiKey = hasOtherAPIs ? null : process.env.ANTHROPIC_API_KEY
 
   try {
@@ -41,6 +40,8 @@ export default async function handler(req, res) {
       maxLayoverMins: maxLayoverMins ? parseInt(maxLayoverMins) : null,
       currency,
       apiKey,
+      skipDuffel:     !!skipDuffel,
+      skipVI:         !!skipVI,
     })
 
     return res.status(200).json(result)
