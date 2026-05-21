@@ -597,14 +597,11 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
     // Travelpayouts: use Aviasales deep link
     if (f.source==='travelpayouts' && f.aviasalesUrl) return f.aviasalesUrl
 
-    // Build Google Flights URL with all params — most reliable universal fallback
-    // type=1 round-trip, type=2 one-way
-    const gBase = 'https://www.google.com/travel/flights'
-    const gp = new URLSearchParams({ hl:'en', gl:'ca', curr:'CAD',
-      departure_id:o, arrival_id:d, outbound_date:dt,
-      travel_class:cls, adults:String(pax), type:rdt?'1':'2' })
-    if (rdt) gp.set('return_date', rdt)
-    const googleUrl = `${gBase}?${gp}`
+    // Build Google Flights URL — using the /search path with tfs format
+    // The standard query params (departure_id etc.) only pre-fill the search form
+    // but don't actually trigger the search. The most reliable approach is
+    // using Google Flights search URL with the route encoded as a query string.
+    const googleUrl = `https://www.google.com/travel/flights/search?q=Flights+from+${o}+to+${d}${dt?`+on+${dt}`:''}&hl=en&gl=ca&curr=CAD`
 
     const name = (f.airline||'').toLowerCase()
     const ac   = (f.code||'').toUpperCase()
@@ -1140,83 +1137,19 @@ export default function FlightTracker() {
             </div>
           ))}
           {routes.length<5 && (
-            <button onClick={()=>setShowAddRoute(v=>!v)}
+            <button onClick={()=>{
+                // Switch sidebar to config, reset fields for new route entry
+                setSideTab('config')
+                setShowAddRoute(true)
+                setNewOrigin(''); setNewDest(''); setNewDepDate(''); setNewRetDate('')
+                setNewCabin('economy'); setNewPassengers('1'); setNewMaxStops(2); setNewMinLayover(60)
+              }}
               style={{ padding:'4px 10px', fontSize:12, fontWeight:700, fontFamily:'inherit', borderRadius:7, cursor:'pointer', background:showAddRoute?'var(--accent-dim)':'transparent', border:`0.5px solid ${showAddRoute?'rgba(110,231,183,.3)':'var(--border)'}`, color:showAddRoute?'var(--accent)':'var(--hint)', whiteSpace:'nowrap' }}>
               + Add Route
             </button>
           )}
         </div>
       </header>
-
-      {/* Add route panel — matches sidebar config layout */}
-      {showAddRoute && (
-        <div style={{ background:'var(--surface)', borderBottom:'0.5px solid var(--border)', padding:'16px 1.5rem' }}>
-          <div style={{ fontSize:11, fontWeight:700, letterSpacing:'.09em', textTransform:'uppercase', color:'var(--hint)', marginBottom:12 }}>New Route</div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(160px, 1fr))', gap:10, maxWidth:900 }}>
-            {/* From / To */}
-            <div><AirportInput label="From" value={newOrigin} onChange={setNewOrigin} /></div>
-            <div><AirportInput label="To" value={newDest} onChange={setNewDest} /></div>
-            {/* Dates */}
-            <div>
-              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Depart date</div>
-              <input type="date" value={newDepDate} onChange={e=>setNewDepDate(e.target.value)} style={{ ...inputStyle }} />
-            </div>
-            <div>
-              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Return date (optional)</div>
-              <input type="date" value={newRetDate} onChange={e=>setNewRetDate(e.target.value)} style={{ ...inputStyle }} />
-            </div>
-            {/* Cabin */}
-            <div>
-              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Cabin</div>
-              <select value={newCabin} onChange={e=>setNewCabin(e.target.value)} style={{ ...inputStyle }}>
-                {[['economy','Economy'],['premium_economy','Prem Economy'],['business','Business'],['first','First Class']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
-              </select>
-            </div>
-            {/* Passengers */}
-            <div>
-              <div style={{ fontSize:11, color:'var(--muted)', marginBottom:4 }}>Passengers</div>
-              <select value={newPassengers||'1'} onChange={e=>setNewPassengers(e.target.value)} style={{ ...inputStyle }}>
-                {[1,2,3,4,5].map(n=><option key={n} value={n}>{n} passenger{n>1?'s':''}</option>)}
-              </select>
-            </div>
-          </div>
-          {/* Max stops */}
-          <div style={{ marginTop:10 }}>
-            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:6 }}>Max stops</div>
-            <div style={{ display:'flex', gap:6 }}>
-              {[['0','Direct only'],['1','1 stop'],['2','2 stops'],['9','Any']].map(([v,l]) => (
-                <button key={v} onClick={()=>setNewMaxStops(+v)}
-                  style={{ padding:'5px 12px', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer',
-                    border:`0.5px solid ${newMaxStops===+v?'rgba(110,231,183,.5)':'var(--border)'}`,
-                    background:newMaxStops===+v?'var(--accent-dim)':'var(--card)',
-                    color:newMaxStops===+v?'var(--accent)':'var(--muted)' }}>
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* Min layover */}
-          <div style={{ marginTop:10 }}>
-            <div style={{ fontSize:11, color:'var(--muted)', marginBottom:6 }}>Min layover</div>
-            <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-              {[[0,'None'],[30,'30m'],[60,'1h'],[90,'1.5h'],[120,'2h'],[180,'3h'],[240,'4h']].map(([v,l]) => (
-                <button key={v} onClick={()=>setNewMinLayover(+v)}
-                  style={{ padding:'5px 10px', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer',
-                    border:`0.5px solid ${newMinLayover===+v?'rgba(110,231,183,.5)':'var(--border)'}`,
-                    background:newMinLayover===+v?'var(--accent-dim)':'var(--card)',
-                    color:newMinLayover===+v?'var(--accent)':'var(--muted)' }}>
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-          {/* Actions */}
-          <div style={{ display:'flex', gap:8, marginTop:14 }}>
-            <button onClick={addRoute} disabled={!newDest} style={{ ...primaryBtn, height:36, padding:'0 22px', opacity:!newDest?0.5:1 }}>+ Add Route</button>
-            <button onClick={()=>setShowAddRoute(false)} style={{ ...ghostBtn, height:36, padding:'0 16px' }}>Cancel</button>
-          </div>
-        </div>
-      )}
 
       <div style={{ display:'grid', gridTemplateColumns:'280px 1fr', minHeight:'calc(100vh - 52px)' }}>
 
@@ -1236,55 +1169,111 @@ export default function FlightTracker() {
           </div>
 
           {/* Config tab */}
-          {sideTab==='config' && cur && (
+          {sideTab==='config' && (
             <>
-              <SLabel>Route Config — {cur.origin} → {cur.destination}</SLabel>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:6, alignItems:'end', marginBottom:10 }}>
-                <AirportInput label="From" value={cur.origin} onChange={v=>updateRoute('origin',v)} />
-                <div style={{ textAlign:'center', color:'var(--hint)', paddingBottom:4, fontSize:18, paddingTop:20 }}>→</div>
-                <AirportInput label="To" value={cur.destination} onChange={v=>updateRoute('destination',v)} />
-              </div>
-              <Field label="Departure">
-                <input type="date" value={cur.depDate} onChange={e=>updateRoute('depDate',e.target.value)} style={inputStyle} />
-              </Field>
-              <Field label="Return (optional — for round trip)">
-                <input type="date" value={cur.retDate} onChange={e=>updateRoute('retDate',e.target.value)} style={inputStyle} />
-              </Field>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
-                <Field label="Cabin">
-                  <select value={cur.cabin} onChange={e=>updateRoute('cabin',e.target.value)} style={inputStyle}>
-                    {[['economy','Economy'],['premium_economy','Prem Eco'],['business','Business'],['first','First']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
-                  </select>
-                </Field>
-                <Field label="Passengers">
-                  <select value={cur.passengers} onChange={e=>updateRoute('passengers',e.target.value)} style={inputStyle}>
-                    {[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}
-                  </select>
-                </Field>
-              </div>
-              <Divider />
-              <SLabel>Filters</SLabel>
-              <Field label="Max stops">
-                <div style={{ display:'flex', gap:6 }}>
-                  {[['0','Direct only'],['1','1 stop'],['2','2 stops'],['9','Any']].map(([v,l]) => (
-                    <button key={v} onClick={()=>updateRoute('maxStops', +v)}
-                      style={{ flex:1, padding:'5px 0', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer', border:`0.5px solid ${(cur.maxStops??2)===+v?'rgba(110,231,183,.5)':'var(--border)'}`, background:(cur.maxStops??2)===+v?'var(--accent-dim)':'var(--card)', color:(cur.maxStops??2)===+v?'var(--accent)':'var(--muted)' }}>
-                      {l}
+              {showAddRoute ? (
+                // ── New route entry mode ──────────────────────────────────
+                <>
+                  <SLabel>New Route</SLabel>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:6, alignItems:'end', marginBottom:10 }}>
+                    <AirportInput label="From" value={newOrigin} onChange={setNewOrigin} />
+                    <div style={{ textAlign:'center', color:'var(--hint)', paddingBottom:4, fontSize:18, paddingTop:20 }}>→</div>
+                    <AirportInput label="To" value={newDest} onChange={setNewDest} />
+                  </div>
+                  <Field label="Departure date">
+                    <input type="date" value={newDepDate} onChange={e=>setNewDepDate(e.target.value)} style={inputStyle} />
+                  </Field>
+                  <Field label="Return date (optional)">
+                    <input type="date" value={newRetDate} onChange={e=>setNewRetDate(e.target.value)} style={inputStyle} />
+                  </Field>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+                    <Field label="Cabin">
+                      <select value={newCabin} onChange={e=>setNewCabin(e.target.value)} style={inputStyle}>
+                        {[['economy','Economy'],['premium_economy','Prem Eco'],['business','Business'],['first','First']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Passengers">
+                      <select value={newPassengers} onChange={e=>setNewPassengers(e.target.value)} style={inputStyle}>
+                        {[1,2,3,4,5].map(n=><option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <Divider />
+                  <SLabel>Filters</SLabel>
+                  <Field label="Max stops">
+                    <div style={{ display:'flex', gap:4 }}>
+                      {[['0','Direct'],['1','1 stop'],['2','2 stops'],['9','Any']].map(([v,l]) => (
+                        <button key={v} onClick={()=>setNewMaxStops(+v)}
+                          style={{ flex:1, padding:'5px 0', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer', border:`0.5px solid ${newMaxStops===+v?'rgba(110,231,183,.5)':'var(--border)'}`, background:newMaxStops===+v?'var(--accent-dim)':'var(--card)', color:newMaxStops===+v?'var(--accent)':'var(--muted)' }}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label={`Min layover: ${newMinLayover}min`}>
+                    <input type="range" min={0} max={300} step={15} value={newMinLayover} onChange={e=>setNewMinLayover(+e.target.value)} style={{ width:'100%' }} />
+                  </Field>
+                  <Divider />
+                  <div style={{ display:'flex', gap:8 }}>
+                    <button onClick={addRoute} disabled={!newDest||!newOrigin||!newDepDate}
+                      style={{ ...primaryBtn, flex:1, height:36, fontSize:13, opacity:(!newDest||!newOrigin||!newDepDate)?0.5:1 }}>
+                      ▶ Add Route
                     </button>
-                  ))}
-                </div>
-              </Field>
-              <Field label={`Min layover: ${cur.minLayover}min`}>
-                <input type="range" min={0} max={300} step={15} value={cur.minLayover} onChange={e=>updateRoute('minLayover',+e.target.value)} style={{ width:'100%' }} />
-              </Field>
-              <Divider />
-              <SLabel>Live Refresh</SLabel>
-              <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
-                <input type="range" min={15} max={21600} step={15} value={cur.refreshSecs} onChange={e=>updateRoute('refreshSecs',+e.target.value)} style={{ flex:1 }} />
-                <span style={{ fontFamily:'DM Mono,monospace', fontSize:13, color:'var(--accent)', minWidth:40 }}>
-                  {cur.refreshSecs<60?`${cur.refreshSecs}s`:cur.refreshSecs<3600?`${Math.round(cur.refreshSecs/60)}m`:`${(cur.refreshSecs/3600).toFixed(1).replace(/\.0$/,'')}h`}
-                </span>
-              </div>
+                    <button onClick={()=>setShowAddRoute(false)} style={{ ...ghostBtn, height:36, padding:'0 14px' }}>Cancel</button>
+                  </div>
+                </>
+              ) : cur && (
+                // ── Existing route config ────────────────────────────────
+                <>
+                  <SLabel>Route Config — {cur.origin} → {cur.destination}</SLabel>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr auto 1fr', gap:6, alignItems:'end', marginBottom:10 }}>
+                    <AirportInput label="From" value={cur.origin} onChange={v=>updateRoute('origin',v)} />
+                    <div style={{ textAlign:'center', color:'var(--hint)', paddingBottom:4, fontSize:18, paddingTop:20 }}>→</div>
+                    <AirportInput label="To" value={cur.destination} onChange={v=>updateRoute('destination',v)} />
+                  </div>
+                  <Field label="Departure">
+                    <input type="date" value={cur.depDate} onChange={e=>updateRoute('depDate',e.target.value)} style={inputStyle} />
+                  </Field>
+                  <Field label="Return (optional — for round trip)">
+                    <input type="date" value={cur.retDate} onChange={e=>updateRoute('retDate',e.target.value)} style={inputStyle} />
+                  </Field>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:10 }}>
+                    <Field label="Cabin">
+                      <select value={cur.cabin} onChange={e=>updateRoute('cabin',e.target.value)} style={inputStyle}>
+                        {[['economy','Economy'],['premium_economy','Prem Eco'],['business','Business'],['first','First']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Passengers">
+                      <select value={cur.passengers} onChange={e=>updateRoute('passengers',e.target.value)} style={inputStyle}>
+                        {[1,2,3,4,5].map(n=><option key={n}>{n}</option>)}
+                      </select>
+                    </Field>
+                  </div>
+                  <Divider />
+                  <SLabel>Filters</SLabel>
+                  <Field label="Max stops">
+                    <div style={{ display:'flex', gap:6 }}>
+                      {[['0','Direct only'],['1','1 stop'],['2','2 stops'],['9','Any']].map(([v,l]) => (
+                        <button key={v} onClick={()=>updateRoute('maxStops', +v)}
+                          style={{ flex:1, padding:'5px 0', fontSize:11, fontWeight:700, fontFamily:'inherit', borderRadius:6, cursor:'pointer', border:`0.5px solid ${(cur.maxStops??2)===+v?'rgba(110,231,183,.5)':'var(--border)'}`, background:(cur.maxStops??2)===+v?'var(--accent-dim)':'var(--card)', color:(cur.maxStops??2)===+v?'var(--accent)':'var(--muted)' }}>
+                          {l}
+                        </button>
+                      ))}
+                    </div>
+                  </Field>
+                  <Field label={`Min layover: ${cur.minLayover}min`}>
+                    <input type="range" min={0} max={300} step={15} value={cur.minLayover} onChange={e=>updateRoute('minLayover',+e.target.value)} style={{ width:'100%' }} />
+                  </Field>
+                  <Divider />
+                  <SLabel>Live Refresh</SLabel>
+                  <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+                    <input type="range" min={15} max={21600} step={15} value={cur.refreshSecs} onChange={e=>updateRoute('refreshSecs',+e.target.value)} style={{ flex:1 }} />
+                    <span style={{ fontFamily:'DM Mono,monospace', fontSize:13, color:'var(--accent)', minWidth:40 }}>
+                      {cur.refreshSecs<60?`${cur.refreshSecs}s`:cur.refreshSecs<3600?`${Math.round(cur.refreshSecs/60)}m`:`${(cur.refreshSecs/3600).toFixed(1).replace(/\.0$/,'')}h`}
+                    </span>
+                  </div>
+                </>
+              )}
             </>
           )}
 
