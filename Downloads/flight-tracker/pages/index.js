@@ -599,11 +599,22 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
     // Travelpayouts: use Aviasales deep link
     if (f.source==='travelpayouts' && f.aviasalesUrl) return f.aviasalesUrl
 
-    // Build Google Flights URL — using the /search path with tfs format
-    // The standard query params (departure_id etc.) only pre-fill the search form
-    // but don't actually trigger the search. The most reliable approach is
-    // using Google Flights search URL with the route encoded as a query string.
-    const googleUrl = `https://www.google.com/travel/flights/search?q=Flights+from+${o}+to+${d}${dt?`+on+${dt}`:''}&hl=en&gl=ca&curr=CAD`
+    // Google Flights deep link — uses the main search path with all params
+    // tfs encoding is complex, but departure_id/arrival_id/outbound_date/type
+    // work reliably on the main /travel/flights path (not /search)
+    // type=2 → one-way, type=1 → round-trip
+    const gBase = 'https://www.google.com/travel/flights'
+    const gp = new URLSearchParams({
+      hl: 'en', gl: 'ca', curr: 'CAD',
+      departure_id:  o,
+      arrival_id:    d,
+      outbound_date: dt,
+      travel_class:  cls,
+      adults:        String(pax),
+      type:          rdt ? '1' : '2',  // 1=round-trip, 2=one-way
+    })
+    if (rdt) gp.set('return_date', rdt)
+    const googleUrl = `${gBase}?${gp}`
 
     const name = (f.airline||'').toLowerCase()
     const ac   = (f.code||'').toUpperCase()

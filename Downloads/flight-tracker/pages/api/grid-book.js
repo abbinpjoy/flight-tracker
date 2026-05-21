@@ -26,14 +26,16 @@ export default async function handler(req, res) {
 
   const travelClass = cabin === 'first' ? '4' : cabin === 'business' ? '3' : cabin === 'premium_economy' ? '2' : '1'
 
-  // Build a canonical fallback URL first (used if SerpAPI lookup fails)
+  // Build a canonical fallback URL — type=2 one-way, type=1 round-trip
+  // Use departure_id/arrival_id/outbound_date params which Google Flights uses to pre-fill
   const fallbackParams = new URLSearchParams({
     hl: 'en', gl: 'ca', curr: 'CAD',
-    departure_id: o, arrival_id: d,
+    departure_id:  o,
+    arrival_id:    d,
     outbound_date: dt,
-    travel_class: travelClass,
-    adults: String(pax),
-    type: rdt ? '1' : '2',
+    travel_class:  travelClass,
+    adults:        String(pax),
+    type:          rdt ? '1' : '2',
   })
   if (rdt) fallbackParams.set('return_date', rdt)
   const fallbackUrl = `https://www.google.com/travel/flights?${fallbackParams}`
