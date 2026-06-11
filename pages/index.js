@@ -295,7 +295,7 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
   // Build Google Flights redirect URL for a specific out+return date
   function bookUrl(outDt, retDt) {
     const params = new URLSearchParams({
-      source: 'serpapi_google_flights',
+      source: 'apify_google_flights',
       origin, destination, date: outDt,
       ...(retDt ? { returnDate: retDt } : {}),
       cabin,
@@ -317,7 +317,7 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
         const results = await pooledFetch(outDates.map(date => () =>
           fetch('/api/search', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ origin, destination, date, returnDate: '', cabin, passengers: parseInt(passengers) || 1, minLayoverMins: 60, currency: 'CAD', skipDuffel: true, skipVI: true }),
+            body: JSON.stringify({ origin, destination, date, returnDate: '', cabin, passengers: parseInt(passengers) || 1, minLayoverMins: 60, currency: 'CAD', skipDuffel: true, skipVI: true, skipApify: true }),
           }).then(r => r.json())
         ), 3)
 
@@ -358,7 +358,7 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
         const results = await pooledFetch(combos.map(({ out, ret }) => () =>
           fetch('/api/search', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ origin, destination, date: out, returnDate: ret, cabin, passengers: parseInt(passengers) || 1, minLayoverMins: 60, currency: 'CAD', skipDuffel: true, skipVI: true }),
+            body: JSON.stringify({ origin, destination, date: out, returnDate: ret, cabin, passengers: parseInt(passengers) || 1, minLayoverMins: 60, currency: 'CAD', skipDuffel: true, skipVI: true, skipApify: true }),
           }).then(r => r.json())
         ), 3)
 
@@ -572,6 +572,11 @@ function PriceGrid({ origin, destination, baseDate, retDate, cabin, passengers }
 // Module-level variable ensures at most 1 Duffel call per DUFFEL_COOLDOWN window globally.
 let globalLastDuffelCall = 0
 const DUFFEL_COOLDOWN    = 90 * 1000  // 90s — Duffel free tier ~1 req/minute
+// Apify actors cost real credits (~$0.01/search against a $5/month free budget),
+// so Google Flights runs at most once per 30 min per browser; cached results
+// are re-injected between deep checks. ~48 deep checks/day max ≈ well within budget.
+let globalLastApifyCall  = 0
+const APIFY_COOLDOWN     = 30 * 60 * 1000
 
 // ── Single route tracker ──────────────────────────────────────────────────
 function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlertsRef }) {
@@ -595,6 +600,8 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
   const cdRef             = useRef(null)
   // Preserve last Duffel + VI results so they survive cooldown ticks
   const lastDuffelFlights = useRef([])
+  // Preserve last Google Flights (Apify) results between 30-min deep checks
+  const lastApifyFlights  = useRef([])
   // ── Stale-closure fix ────────────────────────────────────────────────
   // setInterval(doFetch) captured the FIRST doFetch closure forever: alerts
   // added after tracking started never fired, alertEmail edits were ignored,
@@ -616,9 +623,9 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
     const cabinMap = { economy:'1', premium_economy:'2', business:'3', first:'4' }
     const cls = cabinMap[cabin] || '1'
 
-    // SerpAPI: use the exact Google Flights URL returned by the API
-    if (f.source==='serpapi_google_flights' && f.googleFlightsUrl) {
-      return f.googleFlightsUrl
+    // Google Flights (Apify): use the actor's deep link when provided
+    if (f.source==='apify_google_flights' && (f.googleFlightsUrl || f.bookUrl)) {
+      return f.googleFlightsUrl || f.bookUrl
     }
 
     // Travelpayouts: use Aviasales deep link
@@ -765,11 +772,22 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
         skipDuffel = false
       }
 
+      // Google Flights via Apify: deep-check at most every 30 min (credit budget)
+      const apifyElapsed = now - globalLastApifyCall
+      const apifyFirst   = lastApifyFlights.current.length === 0
+      let skipApify = false
+      if (apifyElapsed < APIFY_COOLDOWN && !apifyFirst) {
+        skipApify = true
+      } else {
+        globalLastApifyCall = Date.now()
+      }
+      if (skipApify) addLog('info', `[${origin}→${destination}] GoogleFlights: cached (next deep check in ${Math.ceil((APIFY_COOLDOWN-apifyElapsed)/60000)}m)`)
+
       const res = await fetch('/api/search', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ origin, destination, date:depDate, returnDate:retDate||null,
           cabin, passengers:parseInt(passengers)||1, minLayoverMins:parseInt(minLayover)||60,
-          maxLayoverMins:null, currency:'CAD', skipDuffel, skipVI: skipDuffel }),
+          maxLayoverMins:null, currency:'CAD', skipDuffel, skipVI: skipDuffel, skipApify }),
       })
       const result = await res.json()
       if (!res.ok||result.error) throw new Error(result.error||`HTTP ${res.status}`)
@@ -791,6 +809,14 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
         lastDuffelFlights.current = newFlights.filter(f =>
           f.source === 'duffel' || f.source === 'virtual_interline'
         )
+      }
+
+      if (skipApify && lastApifyFlights.current.length > 0) {
+        const have = new Set(newFlights.map(f => f.id))
+        const preserved = lastApifyFlights.current.filter(f => !have.has(f.id))
+        newFlights = [...newFlights, ...preserved]
+      } else if (!skipApify) {
+        lastApifyFlights.current = newFlights.filter(f => f.source === 'apify_google_flights')
       }
 
       newFlights = newFlights.sort((a,b)=>(a.price||0)-(b.price||0))
@@ -943,7 +969,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
         <div style={{ display:'flex', gap:6, alignItems:'center' }}>
           {meta?.sourceStats?.filter(s=>s.status==='ok').map(s=>(
             <Badge key={s.name} color={
-              s.name==='SerpAPI'?'green':
+              s.name==='GoogleFlights'?'green':
               s.name==='Duffel'?'blue':
               s.name==='Travelpayouts'?'amber':
               s.name==='VirtualInterline'?'purple':
@@ -1076,7 +1102,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                           ) : (
                             <a href={getBookUrl(f)} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
                               style={{ padding:'4px 10px', fontSize:11, fontWeight:700, background:'var(--accent-dim)', border:'0.5px solid rgba(110,231,183,.25)', borderRadius:6, color:'var(--accent)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
-                              {f.source==='serpapi_google_flights'?'🔍 Google Flights':`✈ Book ${f.airline?.split(' ')[0]||''}`}
+                              {f.source==='apify_google_flights'?'🔍 Google Flights':`✈ Book ${f.airline?.split(' ')[0]||''}`}
                             </a>
                           )}
                         </div>

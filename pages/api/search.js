@@ -16,16 +16,17 @@ export default async function handler(req, res) {
     currency = 'CAD',
     skipDuffel = false,
     skipVI     = false,
+    skipApify  = false,
   } = req.body
 
   if (!origin || !destination || !date) {
     return res.status(400).json({ error: 'origin, destination and date are required' })
   }
 
-  const hasSerpAPI = !!(process.env.SERPAPI_KEY?.length > 10)
+  const hasApify   = !!(process.env.APIFY_TOKEN?.length > 10)
   const hasKiwi    = !!(process.env.KIWI_API_KEY?.length > 5)
   const hasDuffel  = !!(process.env.DUFFEL_ACCESS_TOKEN?.length > 10)
-  const hasOtherAPIs = hasSerpAPI || hasKiwi || hasDuffel
+  const hasOtherAPIs = hasApify || hasKiwi || hasDuffel
   const apiKey = hasOtherAPIs ? null : process.env.ANTHROPIC_API_KEY
 
   try {
@@ -42,6 +43,7 @@ export default async function handler(req, res) {
       apiKey,
       skipDuffel:     !!skipDuffel,
       skipVI:         !!skipVI,
+      skipApify:      !!skipApify,
     })
 
     return res.status(200).json(result)

@@ -7,8 +7,8 @@ AI-powered live flight price tracker with multi-API parallel search.
 Every refresh tick, ALL configured APIs run simultaneously:
 
 ```
-SerpAPI (Google Flights) ──┐
-Kiwi Tequila ──────────────┤──► Merge → Deduplicate → Score → Rank
+Google Flights (Apify) ────┐
+Travelpayouts/Aviasales ───┤──► Merge → Deduplicate → Score → Rank
 Duffel NDC ────────────────┤
 Claude Agent (web search) ─┘
 ```
@@ -22,13 +22,13 @@ Results are merged, deduplicated, scored by value (price + duration + stops + ai
 | API | What it gives | Free tier | Sign up |
 |-----|--------------|-----------|---------|
 | `ANTHROPIC_API_KEY` | Claude agent + web search | Pay per use | console.anthropic.com |
-| `SERPAPI_KEY` | Google Flights live prices | 100/month | serpapi.com |
+| `APIFY_TOKEN` | Google Flights via Apify actor | $5 credit/month (recurring) | console.apify.com |
 | `KIWI_API_KEY` | Budget airlines (legacy keys only — Tequila is invitation-only since 2024) | — | n/a |
 | `DUFFEL_ACCESS_TOKEN` | 300+ airlines, NDC fares | Free test | app.duffel.com/join |
 | `RESEND_API_KEY` | Email alerts | 100/day | resend.com |
 
 **Minimum:** just `ANTHROPIC_API_KEY` — Claude searches Google Flights, Kayak, Skyscanner via web search.
-**Best results:** add `SERPAPI_KEY` + `DUFFEL_ACCESS_TOKEN` + `TRAVELPAYOUTS_TOKEN` — real-time data from multiple sources.
+**Best results:** add `APIFY_TOKEN` + `DUFFEL_ACCESS_TOKEN` + `TRAVELPAYOUTS_TOKEN` — real-time data from multiple sources.
 
 ---
 

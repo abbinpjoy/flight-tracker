@@ -42,7 +42,7 @@ export default async function handler(req, res) {
   const tripType = rdt ? 'roundtrip' : 'oneway'
 
   // ── SERPAPI: redirect to Google Flights using the URL SerpAPI returned ──
-  if (source === 'serpapi_google_flights') {
+  if (source === 'apify_google_flights' || source === 'serpapi_google_flights') {
     const gUrl = googleUrl ? decodeURIComponent(googleUrl) : ''
     if (gUrl.startsWith('https://www.google.com/travel/flights')) {
       return res.redirect(302, gUrl)
