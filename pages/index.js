@@ -586,7 +586,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
   const [tickCount,  setTickCount]  = useState(0)
   const [lastFetch,  setLastFetch]  = useState(null)
   const [countdown,  setCountdown]  = useState(0)
-  const [sortBy,     setSortBy]     = useState('price')
+  const [sortBy,     setSortBy]     = useState('best')  // combined price + total travel time
   const [activeTab,  setActiveTab]  = useState('flights')
   const [expandedFlight, setExpandedFlight] = useState(null)
   const [flashMap,   setFlashMap]   = useState({})
@@ -892,15 +892,32 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
 
   const sorted = useMemo(() => {
     const maxS = maxStops ?? 2
-    return [...flights]
-      .filter(f => (f.stops ?? 0) <= maxS)
-      .sort((a,b) => {
-        if (sortBy==='price')    return (a.price||0)-(b.price||0)
-        if (sortBy==='duration') return (a.durationMins||0)-(b.durationMins||0)
-        if (sortBy==='stops')    return (a.stops||0)-(b.stops||0)
-        if (sortBy==='rating')   return (b.rating||0)-(a.rating||0)
-        return (a.price||0)-(b.price||0)
-      })
+    const arr = [...flights].filter(f => (f.stops ?? 0) <= maxS)
+
+    if (sortBy === 'best') {
+      // Combined rank: 60% price + 40% total travel time, both min-max
+      // normalized within the current result set. Flights with unknown
+      // duration (e.g. Travelpayouts cached fares) are treated as the
+      // slowest so a cheap-but-unknown fare can't win on time it can't prove.
+      const prices = arr.map(f => f.price || 0)
+      const durs   = arr.map(f => f.durationMins).filter(d => d > 0)
+      const minP = Math.min(...prices), maxP = Math.max(...prices), rP = (maxP - minP) || 1
+      const minD = durs.length ? Math.min(...durs) : 0
+      const maxD = durs.length ? Math.max(...durs) : 1
+      const rD   = (maxD - minD) || 1
+      const score = f =>
+        0.6 * (((f.price || 0) - minP) / rP) +
+        0.4 * ((((f.durationMins > 0 ? f.durationMins : maxD)) - minD) / rD)
+      return arr.sort((a, b) => score(a) - score(b))
+    }
+
+    return arr.sort((a,b) => {
+      if (sortBy==='price')    return (a.price||0)-(b.price||0)
+      if (sortBy==='duration') return (a.durationMins||0)-(b.durationMins||0)
+      if (sortBy==='stops')    return (a.stops||0)-(b.stops||0)
+      if (sortBy==='rating')   return (b.rating||0)-(a.rating||0)
+      return (a.price||0)-(b.price||0)
+    })
   }, [flights, sortBy, maxStops])
 
   const cheapest = flights.length ? Math.min(...flights.map(f=>f.price)) : null
@@ -957,7 +974,7 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
               <span style={{ fontSize:11, color:'var(--muted)' }}>{flights.length} options</span>
               <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{ height:26, padding:'0 6px', background:'var(--card)', border:'0.5px solid var(--border-hi)', borderRadius:6, color:'var(--text)', fontFamily:'inherit', fontSize:11, outline:'none' }}>
-                {[['price','Price ↑'],['duration','Duration ↑'],['stops','Stops ↑'],['rating','Rating ↓']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                {[['best','Best (price + time)'],['price','Price ↑'],['duration','Duration ↑'],['stops','Stops ↑'],['rating','Rating ↓']].map(([v,l])=><option key={v} value={v}>{l}</option>)}
               </select>
             </div>
           )}
@@ -1015,7 +1032,9 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                         {isBest && !f.isVirtualInterline && <div style={{ fontSize:9, fontWeight:800, color:'var(--green)', marginBottom:2 }}>★ Cheapest</div>}
                         {f.isVirtualInterline && (
                           <div style={{ fontSize:9, fontWeight:800, color:'var(--purple)', marginBottom:2 }}>
-                            CA${f.leg1?.price?.toLocaleString()} + CA${f.leg2?.price?.toLocaleString()}
+                            {f.isRoundTripVI
+                              ? `out CA$${f.outboundPrice?.toLocaleString()} + return CA$${f.returnPrice?.toLocaleString()}`
+                              : `CA$${f.leg1?.price?.toLocaleString()} + CA$${f.leg2?.price?.toLocaleString()}`}
                           </div>
                         )}
                         <div style={{ fontSize:20, fontWeight:800, letterSpacing:'-.03em' }}>CA${f.price.toLocaleString()}</div>
@@ -1034,6 +1053,20 @@ function RouteTracker({ route, onUpdate, alerts, alertEmail, addLog, firedAlerts
                                 style={{ padding:'4px 8px', fontSize:10, fontWeight:700, background:'var(--purple-dim)', border:'0.5px solid rgba(168,85,247,.3)', borderRadius:6, color:'var(--purple)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
                                 ✈ {f.leg2?.airline?.split(' ')[0]||'Leg 2'} ({f.leg2?.code||'?'}) {f.via}→{destination}
                               </a>
+                              {f.retLeg1 && (
+                                <a href={f.retLeg1.bookUrl || getBookUrl({...f, airline:f.retLeg1.airline, code:f.retLeg1.code, source:'duffel', googleFlightsUrl:null})}
+                                  target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
+                                  style={{ padding:'4px 8px', fontSize:10, fontWeight:700, background:'var(--purple-dim)', border:'0.5px solid rgba(168,85,247,.3)', borderRadius:6, color:'var(--purple)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
+                                  ↩ {f.retLeg1.airline?.split(' ')[0]||'Ret 1'} ({f.retLeg1.code||'?'}) {destination}→{f.via}
+                                </a>
+                              )}
+                              {f.retLeg2 && (
+                                <a href={f.retLeg2.bookUrl || getBookUrl({...f, airline:f.retLeg2.airline, code:f.retLeg2.code, source:'duffel', googleFlightsUrl:null})}
+                                  target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
+                                  style={{ padding:'4px 8px', fontSize:10, fontWeight:700, background:'var(--purple-dim)', border:'0.5px solid rgba(168,85,247,.3)', borderRadius:6, color:'var(--purple)', textDecoration:'none', fontFamily:'inherit', display:'inline-block' }}>
+                                  ↩ {f.retLeg2.airline?.split(' ')[0]||'Ret 2'} ({f.retLeg2.code||'?'}) {f.via}→{origin}
+                                </a>
+                              )}
                             </>
                           ) : f.source==='travelpayouts' ? (
                             <a href={f.aviasalesUrl||f.bookUrl||'#'} target="_blank" rel="noopener" onClick={e=>e.stopPropagation()}
