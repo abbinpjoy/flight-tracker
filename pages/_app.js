@@ -1,0 +1,17 @@
+import '../styles/globals.css'
+import Head from 'next/head'
+export default function App({ Component, pageProps }) {
+  return (
+    <>
+      <Head>
+        <title>FlightTrack — Live Price Tracker</title>
+        <meta name="description" content="AI-powered flight price tracker with real-time alerts" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈</text></svg>" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      </Head>
+      <Component {...pageProps} />
+    </>
+  )
+}

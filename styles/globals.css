@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:         #07080f;
+  --surface:    #0c0e1a;
+  --card:       #111420;
+  --border:     rgba(255,255,255,0.07);
+  --border-hi:  rgba(255,255,255,0.13);
+  --text:       #e8eaf2;
+  --muted:      #6b7280;
+  --hint:       #374151;
+  --green:      #22c55e; --green-dim:  rgba(34,197,94,0.12);
+  --amber:      #f59e0b; --amber-dim:  rgba(245,158,11,0.12);
+  --red:        #ef4444; --red-dim:    rgba(239,68,68,0.12);
+  --blue:       #3b82f6; --blue-dim:   rgba(59,130,246,0.12);
+  --accent:     #6ee7b7; --accent-dim: rgba(110,231,183,0.10);
+  --purple:     #a855f7; --purple-dim: rgba(168,85,247,0.12);
+}
+
+html, body { background: var(--bg); color: var(--text); font-family: 'Syne','DM Sans',system-ui,sans-serif; min-height:100vh; }
+input[type=range]  { accent-color: var(--accent); }
+input[type=date]::-webkit-calendar-picker-indicator { filter: invert(0.5); cursor: pointer; }
+input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--hint); border-radius: 2px; }
+
+@keyframes pulse      { 0%,100%{opacity:1}      50%{opacity:.35}  }
+@keyframes spin       { to{transform:rotate(360deg)}               }
+@keyframes fadeUp     { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:none} }
+@keyframes flashGreen { 0%,100%{background:var(--surface)} 45%{background:rgba(34,197,94,.14)} }
+@keyframes flashRed   { 0%,100%{background:var(--surface)} 45%{background:rgba(239,68,68,.14)} }
+@keyframes flashAmber { 0%,100%{background:var(--surface)} 45%{background:rgba(245,158,11,.14)} }
+@keyframes ringPop    { 0%{transform:scale(1)} 40%{transform:scale(1.35)} 100%{transform:scale(1)} }
+
+.anim-pulse     { animation: pulse 2s infinite; }
+.anim-spin      { animation: spin .75s linear infinite; }
+.anim-fade      { animation: fadeUp .28s ease both; }
+.anim-flash-g   { animation: flashGreen .7s ease; }
+.anim-flash-r   { animation: flashRed   .7s ease; }
+.anim-flash-a   { animation: flashAmber .7s ease; }
+.anim-ring      { animation: ringPop .4s ease; }
